@@ -12,7 +12,7 @@ from datetime import timezone as dt_timezone
 from core.events import verify_chain
 from core.models import EventLog, Group, Member
 from payments.models import Hold
-from purchases.models import Expense, ExpenseSplit, Purchase, Share, Vote
+from purchases.models import Expense, ExpenseSplit, Option, Purchase, Share, Vote
 
 S = Share.Status
 
@@ -50,6 +50,32 @@ def preferences_json(member: Member) -> dict:
     prefs = member.prefs or {}
     return {"budget_cap_cents": member.budget_cap_cents, "must_haves": prefs.get("must_haves", []),
             "dealbreakers": prefs.get("dealbreakers", []), "flexibility": prefs.get("flexibility", "firm")}
+
+
+# ---------------------------------------------------------------- options
+INTERNAL_META_KEYS = ("search_id", "rank", "per_person_cents", "group_size")
+
+
+def option_json(option: Option) -> dict:
+    meta = option.meta or {}
+    return {
+        "id": str(option.id), "rank": meta.get("rank"), "title": option.title, "merchant_slug": option.merchant_slug,
+        "listing_ref": option.listing_ref, "total_cents": option.total_cents,
+        "per_person_cents": meta.get("per_person_cents"), "group_size": meta.get("group_size"),
+        "capacity": option.capacity, "features": option.features, "score": round(option.score or 0),
+        "explanation_facts": option.explanation_facts,
+        "meta": {k: v for k, v in meta.items() if k not in INTERNAL_META_KEYS},
+    }
+
+
+def latest_options_json(group: Group) -> dict:
+    """The options from the group's most recent search, best first."""
+    newest = Option.objects.filter(group=group).order_by("-created_at").first()
+    if newest is None:
+        return {"options": []}
+    batch = [o for o in Option.objects.filter(group=group, meta__search_id=newest.meta.get("search_id"))]
+    batch.sort(key=lambda o: o.meta.get("rank") or 99)
+    return {"options": [option_json(o) for o in batch]}
 
 
 # ---------------------------------------------------------------- votes

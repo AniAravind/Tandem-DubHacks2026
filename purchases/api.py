@@ -20,7 +20,7 @@ from rest_framework.response import Response
 
 from core.events import EventType, log_event
 from core.models import Group, Member
-from purchases import rules, serializers as ser
+from purchases import consensus, rules, serializers as ser
 from purchases.fixtures import FIXTURES
 from purchases.models import Ballot, Purchase, Share, Vote
 
@@ -114,8 +114,11 @@ def my_preferences(request, gid):
 
 
 @api_view(["GET"])
+@api_errors
 def options(request, gid):
-    return Response(FIXTURES["options"])                       # real ranking arrives in M3
+    """Options from the group's latest search (ranking happens in the search_options tool)."""
+    current_member(request, gid)
+    return Response(ser.latest_options_json(get_object_or_404(Group, pk=gid)))
 
 
 # ------------------------------------------------------------------ voting
@@ -133,6 +136,7 @@ def cast_ballot(request, vid):
         Ballot.objects.update_or_create(vote=vote, member=member, defaults={"choice_key": choice})   # change allowed
         log_event(EventType.BALLOT_CAST, actor=f"member:{member.id}", group_id=vote.group_id,
                   payload={"vote_id": str(vote.id), "member_id": str(member.id)})
+        vote = consensus.close_if_decided(vote)               # closes right away once everybody has voted
     return Response(ser.vote_json(vote, member))
 
 
