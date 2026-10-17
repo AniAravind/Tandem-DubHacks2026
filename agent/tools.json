@@ -1,0 +1,48 @@
+[
+  {"type": "function", "function": {"name": "search_options",
+    "description": "Find purchase options for the group. Results are ranked by Tandem's deterministic consensus engine; cite only the returned explanation_facts.",
+    "parameters": {"type": "object", "additionalProperties": false, "required": ["category", "group_size"],
+      "properties": {
+        "category": {"type": "string", "enum": ["rental", "passes", "flights", "furniture", "electronics", "gift_bundle"]},
+        "budget_per_person_max": {"type": "number", "minimum": 0, "maximum": 5000},
+        "dates": {"type": "object", "additionalProperties": false,
+                  "properties": {"start": {"type": "string", "format": "date"}, "end": {"type": "string", "format": "date"}}},
+        "group_size": {"type": "integer", "minimum": 2, "maximum": 20},
+        "location": {"type": "string", "maxLength": 80},
+        "must_haves": {"type": "array", "items": {"type": "string", "maxLength": 40}, "maxItems": 10}}}}},
+  {"type": "function", "function": {"name": "start_vote",
+    "description": "Start a group vote between 2 to 4 option ids returned by search_options.",
+    "parameters": {"type": "object", "additionalProperties": false, "required": ["option_ids"],
+      "properties": {
+        "option_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 4},
+        "closes_in_minutes": {"type": "integer", "minimum": 5, "maximum": 1440}}}}},
+  {"type": "function", "function": {"name": "create_purchase",
+    "description": "After a vote has a winner, open funding: creates per-member shares and sends private consent links. Does not charge anyone.",
+    "parameters": {"type": "object", "additionalProperties": false, "required": ["option_id", "member_ids", "deadline_hours"],
+      "properties": {
+        "option_id": {"type": "string"},
+        "member_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+        "deadline_hours": {"type": "integer", "minimum": 1, "maximum": 72}}}}},
+  {"type": "function", "function": {"name": "check_status",
+    "description": "Get funding status (counts only, never individual budgets).",
+    "parameters": {"type": "object", "additionalProperties": false,
+      "properties": {"purchase_id": {"type": "string"}}}}},
+  {"type": "function", "function": {"name": "propose_fallback",
+    "description": "When a member declines or drops, or price/deadline risk occurs, compute up to 3 fallbacks deterministically and post them for a vote.",
+    "parameters": {"type": "object", "additionalProperties": false, "required": ["purchase_id", "reason"],
+      "properties": {
+        "purchase_id": {"type": "string"},
+        "reason": {"type": "string", "enum": ["dropout", "decline", "price_change", "deadline_risk", "sold_out"]}}}}},
+  {"type": "function", "function": {"name": "add_expense",
+    "description": "Record a shared expense paid by one member and split it.",
+    "parameters": {"type": "object", "additionalProperties": false, "required": ["amount", "payer_id", "split"],
+      "properties": {
+        "amount": {"type": "number", "exclusiveMinimum": 0, "maximum": 5000},
+        "payer_id": {"type": "string"},
+        "description": {"type": "string", "maxLength": 80},
+        "split": {"type": "object", "additionalProperties": false, "required": ["mode"],
+          "properties": {
+            "mode": {"type": "string", "enum": ["equal", "shares", "custom"]},
+            "member_ids": {"type": "array", "items": {"type": "string"}},
+            "custom_amounts": {"type": "object", "additionalProperties": {"type": "number"}}}}}}}}
+]

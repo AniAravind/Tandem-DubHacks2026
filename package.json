@@ -1,0 +1,8 @@
+{
+  "name": "tandem-root",
+  "private": true,
+  "engines": { "node": "20.x" },
+  "scripts": {
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build"
+  }
+}
