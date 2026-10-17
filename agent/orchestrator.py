@@ -4,9 +4,12 @@ run(group_id, inbound) -> list[AgentMessage]. Nothing here imports payments/ and
 """
 import json
 import logging
+import os
 import pathlib
 
-from agent import cards, safety
+from django.conf import settings
+
+from agent import cards, demo_script, safety
 from agent.context import build_messages
 from agent.validate import validate
 from chat.adapters.base import AgentMessage
@@ -109,7 +112,13 @@ class Orchestrator:
                 log.warning("xAI call failed (attempt %s)", attempt + 1, exc_info=True)
         return None
 
-    def run(self, actor: str, event: dict | None = None) -> list[AgentMessage]:
+    def run_scripted(self, actor: str, event: dict | None, text: str) -> list[AgentMessage] | None:
+        reply_text = demo_script.scripted_text(self, actor, text, event)
+        return self.compose(reply_text) if reply_text else None
+
+    def run(self, actor: str, event: dict | None = None, text: str = "") -> list[AgentMessage]:
+        if os.getenv("DEMO_SCRIPTED") == "1":
+            return self.run_scripted(actor, event, text) or [AgentMessage(text=safety.SAFE_TEXT_NO_TOOLS)]
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
         calls = repairs = 0
         text = None
@@ -117,6 +126,10 @@ class Orchestrator:
             force_text = calls >= MAX_TOOL_CALLS or repairs > MAX_REPAIRS
             resp = self._call(messages, **({"tool_choice": "none"} if force_text else {}))
             if resp is None:
+                if settings.DEMO_MODE and not self.tool_results:     # Grok unreachable: the demo script is the backup
+                    scripted = self.run_scripted(actor, event, text)
+                    if scripted:
+                        return scripted
                 return [AgentMessage(text=FAILURE_TEXT)]
             msg = resp.choices[0].message
             if not msg.tool_calls or force_text:
@@ -173,9 +186,9 @@ def latest_text(group_id, member_id) -> str:
 def run(group_id, inbound, event: dict | None = None, **kw) -> list[AgentMessage]:
     """Entry point used by chat.services. inbound is an InboundMessage (or None for server events)."""
     actor = f"member:{inbound.member_id}" if inbound else "agent"
-    if inbound:
-        refusal = safety.guard(inbound.text or latest_text(group_id, inbound.member_id))
-        if refusal:
-            log_event(EventType.AGENT_TOOL_REJECTED, actor=actor, group_id=group_id, payload={"tool": "guard", "reason": "injection"})
-            return [AgentMessage(text=refusal)]
-    return Orchestrator(group_id, **kw).run(actor, event)
+    text = (inbound.text or latest_text(group_id, inbound.member_id)) if inbound else ""
+    refusal = safety.guard(text) if text else None
+    if refusal:
+        log_event(EventType.AGENT_TOOL_REJECTED, actor=actor, group_id=group_id, payload={"tool": "guard", "reason": "injection"})
+        return [AgentMessage(text=refusal)]
+    return Orchestrator(group_id, **kw).run(actor, event, text)

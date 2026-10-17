@@ -19,8 +19,9 @@ function cardKey(m: ChatMessage): string | null {
   return null;
 }
 
-export function MessageList({ messages, meId, onReply, consentUrl }: {
+export function MessageList({ messages, meId, onReply, consentUrl, onDemoShare }: {
   messages: ChatMessage[]; meId: string; onReply: (t: string) => void; consentUrl?: string;
+  onDemoShare?: (action: "hold" | "decline") => void;
 }) {
   const latest = new Map<string, number>();
   for (const m of messages) {
@@ -43,7 +44,7 @@ export function MessageList({ messages, meId, onReply, consentUrl }: {
                 <p>{linkify(m.text)}</p>
               </div>
             ) : null}
-            {showCard && m.card ? <CardView card={m.card} onReply={onReply} consentUrl={consentUrl} /> : null}
+            {showCard && m.card ? <CardView card={m.card} onReply={onReply} consentUrl={consentUrl} meId={meId} onDemoShare={onDemoShare} /> : null}
           </li>
         );
       })}

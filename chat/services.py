@@ -10,7 +10,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from agent.cards import consent_links, funding_card, usd, vote_card
+from agent.cards import consent_links, funding_card, usd, vote_card, when
 from chat.adapters.base import AgentMessage, InboundMessage
 from chat.adapters.web import WebChatAdapter, next_seq
 from chat.models import ChatMessage
@@ -165,3 +165,39 @@ def _announce_winner(group_id, engine, vote: dict) -> None:
     post_card(group_id, AgentMessage(text=f"🗳️ {winner['label']} wins, {winner['count']} votes to {others}."))
     schedule_agent(group_id, None, {"type": "vote_closed", "vote_id": vote["vote_id"], "winner_option_id": winner["option_id"],
                                     "winner_label": winner["label"]})
+
+
+# ------------------------------------------------------------------ server events and fake-engine demo actions
+def on_share_declined(group_id, purchase_id) -> None:
+    """For the rules engine: a member declined or left, so ask the agent for fallbacks (it never says who)."""
+    schedule_agent(group_id, None, {"type": "share_declined", "purchase_id": str(purchase_id)})
+
+
+class DemoUnavailable(Exception):
+    pass
+
+
+def demo_share_action(member, action: str) -> dict:
+    """Stand-in for the consent page while the fake engine is in use: hold or decline YOUR OWN share."""
+    from agent.fakes import FakeRulesEngine
+    from agent.orchestrator import get_engine
+    engine = get_engine(member.group_id)
+    if not isinstance(engine, FakeRulesEngine):
+        raise DemoUnavailable("Use your consent link; the real payment flow is live.")
+    p = engine.purchase_data()
+    share = next((s for s in (p or {}).get("shares", []) if s["member_id"] == str(member.id)), None)
+    if not share or share["status"] not in ("invited", "viewing"):
+        raise DemoUnavailable("You don't have a share waiting for you.")
+    p = engine.set_share_status(str(member.id), "held" if action == "hold" else "declined")
+    counts = p["counts"]
+    if action == "hold":
+        text = f"{member.display_name}'s in. {counts['held']} of {counts['active']} held."
+        if counts["held"] == counts["active"]:
+            text = f"✅ All {counts['active']} in. Nobody fronted anything. Booking goes through signed merchant checkout next. (Simulated.)"
+        elif counts["active"] - counts["held"] == 1:
+            text += f" Waiting on 1 more, deadline {when(p['deadline_at'], member.group.timezone)}."
+        post_card(member.group_id, AgentMessage(text=text, card=funding_card(p)))
+    else:
+        post_card(member.group_id, AgentMessage(text="", card=funding_card(p)))
+        on_share_declined(member.group_id, p["purchase_id"])
+    return {"share_status": "held" if action == "hold" else "declined", "simulated": True}
