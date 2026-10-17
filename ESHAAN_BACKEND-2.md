@@ -1166,7 +1166,7 @@ from openai import OpenAI
 
 client = OpenAI(api_key=os.environ["XAI_API_KEY"], base_url=os.getenv("XAI_BASE_URL", "https://api.x.ai/v1"),
                 timeout=float(os.getenv("XAI_TIMEOUT_S", "8")))
-MODEL = os.getenv("XAI_MODEL", "grok-4-1-fast")   # VERIFY exact id in the xAI console
+MODEL = os.getenv("XAI_MODEL", "grok-4.7")   # VERIFY exact id in the xAI console
 
 
 def chat(messages: list[dict], tools: list[dict]):
@@ -1616,7 +1616,7 @@ Tandem-DubHacks2026/
 | Node | **20 LTS, 20.19 or newer** (`engines` in both `package.json` files) | Team-agreed. Current Vite releases need Node 20.19+. Check with `node -v`. |
 | Frontend | React + TypeScript via **Vite**, in `/frontend` | Fast dev, static build output |
 | Hosting | **One Heroku app**: Django serves API **and** the React build (whitenoise). Add-ons: Heroku Postgres, Heroku Redis. Dynos: `web` + `worker` (Celery, with beat embedded). | **One URL for judges**, **no CORS** (same origin), one deploy, one set of config vars, cheaper on credits. The mock merchant also lives in this app under `/merchants/<slug>/`. |
-| LLM | **Grok 4.1 Fast** via xAI's OpenAI-compatible API (`https://api.x.ai/v1`). Key in `XAI_API_KEY`, model id in `XAI_MODEL`. | Tool calling only. **Verify the exact model id string in the xAI console** (Aryan) and put it in `XAI_MODEL`. Don't hardcode it. |
+| LLM | **Grok 4.7** via xAI's OpenAI-compatible API (`https://api.x.ai/v1`). Key in `XAI_API_KEY`, model id in `XAI_MODEL`. | Tool calling only. **Verify the exact model id string in the xAI console** (Aryan) and put it in `XAI_MODEL`. Don't hardcode it. |
 | Chat | **React web chat** for Phase 0+. `ChatAdapter` interface so Photon (iMessage) plugs in later. | Aryan tests Photon separately. Nothing in Phase 0 depends on it. |
 | Visa | **Fully simulated** `SimulatedVisaAgentGateway`. No Visa Acceptance sandbox. | Visa agentic APIs are not publicly accessible. We label every simulated surface. |
 | Money | Integer cents everywhere (`*_cents` BigInteger). Never floats. | No rounding bugs |
@@ -1935,7 +1935,7 @@ CELERY_EAGER=1
 # LLM (Aryan supplies the key; NEVER commit it)
 XAI_API_KEY=
 XAI_BASE_URL=https://api.x.ai/v1
-XAI_MODEL=grok-4-1-fast        # VERIFY exact id string in the xAI console
+XAI_MODEL=grok-4.7        # VERIFY exact id string in the xAI console
 XAI_TIMEOUT_S=8
 
 # Agent signing (TAP-style, Ed25519)
@@ -1994,7 +1994,7 @@ heroku config:set DJANGO_SECRET_KEY=... FIELD_ENCRYPTION_KEY=... AGENT_SIGNING_K
   MERCHANT_BASE_URL=$APP_URL/merchants AGENT_KEY_ID=tandem-agent-2026-10 \
   PAYMENTS_GATEWAY=simulated SIM_LATENCY_MS=400 SIM_HOLD_TTL_DAYS=7 CHAT_ADAPTER=web \
   DEMO_MODE=1 DEMO_SCRIPTED=0 DEMO_ADMIN_KEY=... WEB_CONCURRENCY=3 \
-  XAI_BASE_URL=https://api.x.ai/v1 XAI_MODEL=grok-4-1-fast XAI_TIMEOUT_S=8
+  XAI_BASE_URL=https://api.x.ai/v1 XAI_MODEL=grok-4.7 XAI_TIMEOUT_S=8
 
 # Aryan sets the key himself from his laptop:
 heroku config:set XAI_API_KEY=... -a tandem-dubhacks26

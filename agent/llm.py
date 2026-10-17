@@ -6,7 +6,7 @@ from openai import OpenAI
 client = OpenAI(api_key=os.getenv("XAI_API_KEY") or "missing-xai-api-key",
                 base_url=os.getenv("XAI_BASE_URL", "https://api.x.ai/v1"),
                 timeout=float(os.getenv("XAI_TIMEOUT_S", "8")))
-MODEL = os.getenv("XAI_MODEL", "grok-4-1-fast")   # VERIFY exact id in the xAI console
+MODEL = os.getenv("XAI_MODEL", "grok-4.7")   # VERIFY exact id in the xAI console
 
 
 def chat(messages: list[dict], tools: list[dict]):

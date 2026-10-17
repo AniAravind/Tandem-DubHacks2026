@@ -1,4 +1,5 @@
-import json, pathlib
+import json, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))   # so `python scripts/xai_smoke.py` finds agent/
 from dotenv import load_dotenv
 load_dotenv()
 from agent.llm import chat
