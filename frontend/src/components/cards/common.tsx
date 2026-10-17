@@ -1,0 +1,18 @@
+export interface CardProps<T> {
+  data: T;
+  onReply: (text: string) => void;   // sends a chat message as the current member (votes are "1", "2", "3")
+  consentUrl?: string;               // the current member's private consent link, if they have one
+}
+
+export function SimBadge({ children = "SIMULATED" }: { children?: string }) {
+  return (
+    <span className="sim-badge" aria-label="Simulated: no real money moves">
+      <span aria-hidden="true">🧪 </span>
+      {children}
+    </span>
+  );
+}
+
+export function DemoTag() {
+  return <span className="card-demo">Demo data</span>;
+}
