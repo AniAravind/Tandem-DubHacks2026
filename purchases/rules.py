@@ -17,19 +17,24 @@ Rules used here (see the brief, section "Rules"):
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
-from datetime import timezone as dt_timezone
+import uuid
+from datetime import timedelta, timezone as dt_timezone
 
+from django.conf import settings
+from django.core import signing
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from chat.adapters.base import AgentMessage, Card
-from core.events import event_context
-from core.models import Member
+from core.events import EventType, event_context, log_event
+from core.models import EventLog, Member
 from payments.gateway import GatewayError, Money, get_gateway
 from payments.models import AgentToken, Consent, Hold, Mandate
-from purchases.models import Purchase, Share
+from purchases import consensus, serializers as ser, toolschema
+from purchases.models import Option, Purchase, Share, Vote
 from purchases.states import IllegalTransition, transition_purchase, transition_share
 
 log = logging.getLogger(__name__)
@@ -315,3 +320,215 @@ def member_withdraw(share_id, reason: str) -> dict:
     _post_group_update(purchase_id)
     share.refresh_from_db()
     return {"share_status": share.status, "group_counts": _group_counts(purchase)}
+
+
+# ======================================================================================================
+# RulesEngine: the single door the AI agent goes through (milestone M3)
+# ======================================================================================================
+MAX_CALLS_PER_MINUTE = 20             # R11: agent tool calls per group
+MAX_OPEN_PURCHASES_PER_MEMBER = 2     # R12
+MAX_PURCHASE_CENTS = 1_000_000        # R12: $10,000 per purchase
+OPEN_PURCHASE_STATES = (P.COLLECTING, P.FUNDED)
+
+
+def consent_token(share: Share) -> str:
+    """Private link token for one share. Uses Ani's version once it exists, otherwise a signed stand-in."""
+    try:
+        from payments.services import make_consent_token          # Ani's real one
+        return make_consent_token(share)
+    except ImportError:
+        payload = {"share_id": str(share.id), "member_id": str(share.member_id), "purchase_version": share.purchase_version}
+        return signing.TimestampSigner(salt="consent").sign(json.dumps(payload, sort_keys=True))
+
+
+def consent_link(share: Share) -> str:
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/c/{consent_token(share)}"
+
+
+def _send_consent_links(shares: list) -> int:
+    """
+    Hand each member their private link. Consent links are secrets (whoever holds one can act as that member),
+    so they are NEVER posted in the group chat or returned to the AI. Delivery needs a private-message sender
+    from the chat side (chat.services.send_private, Aryan). Until that exists, nothing is sent and we return 0.
+    """
+    try:
+        from chat.services import send_private
+    except ImportError:
+        log.warning("chat.services.send_private is missing; %d consent links were created but not delivered", len(shares))
+        return 0
+    for share in shares:
+        send_private(str(share.purchase.group_id), str(share.member_id),
+                     AgentMessage(text="Your private link to approve your share (simulated payments).",
+                                  link=consent_link(share), private_to_member_id=str(share.member_id)))
+    return len(shares)
+
+
+class RulesEngine:
+    """
+    execute(tool, args, actor) -> {"ok": True, "data": {...}} or {"ok": False, "error": {"code", "message"}}
+
+    `actor` is "member:<uuid>", the person whose chat message led to this call. Every call is checked against
+    the argument schema in agent/tools.json, rate limited, and logged (tool name and argument NAMES only).
+    """
+
+    def __init__(self):
+        self.schemas = toolschema.load_tool_schemas()
+        self.tools = {
+            "search_options": self._search_options, "start_vote": self._start_vote,
+            "create_purchase": self._create_purchase, "check_status": self._check_status,
+            "propose_fallback": self._propose_fallback, "add_expense": self._add_expense}
+
+    def execute(self, tool: str, args: dict, actor: str) -> dict:
+        group_id = None
+        try:
+            if tool not in self.tools:
+                raise RuleError("unknown_tool", f"There is no tool called {tool!r}.")
+            problems = toolschema.validate(self.schemas[tool], args)
+            if problems:
+                raise RuleError("invalid_arguments", "; ".join(problems))
+            member = self._actor(actor)                                   # R1
+            group_id = member.group_id
+            self._rate_limit(group_id)                                    # R11
+            log_event(EventType.AGENT_TOOL_CALLED, actor=actor, group_id=group_id,
+                      payload={"tool": tool, "arg_names": sorted(args)})  # never the values (they can include budgets)
+            with transaction.atomic():
+                return {"ok": True, "data": self.tools[tool](member, args)}
+        except RuleError as e:
+            log_event(EventType.AGENT_TOOL_REJECTED, actor=actor, group_id=group_id,
+                      payload={"tool": tool, "code": e.code})
+            return {"ok": False, "error": {"code": e.code, "message": e.message}}
+
+    # ------------------------------------------------------------------ checks
+    @staticmethod
+    def _actor(actor: str) -> Member:
+        try:
+            prefix, raw = actor.split(":", 1)
+            member = Member.objects.get(pk=uuid.UUID(raw))
+        except (ValueError, Member.DoesNotExist):
+            raise RuleError("unauthorized", "The caller is not a known member.")
+        if prefix != "member" or member.status != Member.Status.ACTIVE:
+            raise RuleError("unauthorized", "Only active members of the group can use Tandem.")
+        return member
+
+    @staticmethod
+    def _rate_limit(group_id) -> None:
+        since = timezone.now() - timedelta(minutes=1)
+        recent = EventLog.objects.filter(group_id=group_id, type=EventType.AGENT_TOOL_CALLED, created_at__gte=since).count()
+        if recent >= MAX_CALLS_PER_MINUTE:
+            raise RuleError("rate_limited", "Too many requests this minute. Try again shortly.")
+
+    @staticmethod
+    def _own(model, pk, member: Member, what: str):
+        """Fetch a row by id, but only if it belongs to the caller's group (a bad id never leaks other groups)."""
+        try:
+            obj = model.objects.get(pk=uuid.UUID(str(pk)))
+        except (ValueError, model.DoesNotExist):
+            raise RuleError("not_found", f"No such {what}.")
+        if obj.group_id != member.group_id:
+            raise RuleError("not_found", f"No such {what}.")
+        return obj
+
+    # ------------------------------------------------------------------ the six tools
+    def _search_options(self, member: Member, args: dict) -> dict:
+        members = consensus.active_members(member.group_id)
+        if args["group_size"] != len(members):
+            raise RuleError("group_size_mismatch", f"The group has {len(members)} active members, not {args['group_size']}.")
+        budget_max = args.get("budget_per_person_max")
+        ranked = consensus.rank_options(
+            members, args["category"], args["group_size"], extra_must_haves=args.get("must_haves", []),
+            budget_per_person_max_cents=round(budget_max * 100) if budget_max is not None else None)
+        search_id = uuid.uuid4().hex
+        options = []
+        for rank, c in enumerate(ranked, start=1):
+            listing = c.listing
+            options.append(Option.objects.create(
+                group_id=member.group_id, merchant_slug=listing.merchant.slug, listing_ref=listing.ref,
+                category=args["category"], title=listing.title, total_cents=c.total_cents, capacity=listing.capacity,
+                features=listing.features, score=c.score, explanation_facts=c.facts,
+                meta={**listing.meta, "search_id": search_id, "rank": rank, "per_person_cents": c.per_person_cents,
+                      "group_size": args["group_size"]}))
+        log_event(EventType.OPTIONS_RANKED, actor="rules", group_id=member.group_id,
+                  payload={"count": len(options), "top": options[0].title if options else None})
+        return {"options": [ser.option_json(o) for o in options]}
+
+    def _start_vote(self, member: Member, args: dict) -> dict:
+        ids = args["option_ids"]
+        if len(set(ids)) != len(ids):
+            raise RuleError("invalid_arguments", "option_ids must be different from each other.")
+        options = [self._own(Option, oid, member, "option") for oid in ids]
+        active = len(consensus.active_members(member.group_id))
+        vote = Vote.objects.create(
+            group_id=member.group_id, purpose=Vote.Purpose.PICK_OPTION, quorum=consensus.quorum_for(active),
+            closes_at=timezone.now() + timedelta(minutes=args.get("closes_in_minutes", 30)),
+            choices=[{"key": str(i), "option_id": str(o.id), "label": o.title} for i, o in enumerate(options, start=1)])
+        log_event(EventType.VOTE_OPENED, actor=f"member:{member.id}", group_id=member.group_id,
+                  payload={"vote_id": str(vote.id), "choices": len(options)})
+        return {"vote_id": str(vote.id), "closes_at": ser.iso(vote.closes_at), "quorum": vote.quorum,
+                "choices": [{"key": c["key"], "label": c["label"]} for c in vote.choices]}
+
+    def _create_purchase(self, member: Member, args: dict) -> dict:
+        option = self._own(Option, args["option_id"], member, "option")
+        # R3: only the option that WON a closed vote can be bought.
+        won = False
+        for vote in Vote.objects.filter(group_id=member.group_id, purpose=Vote.Purpose.PICK_OPTION):
+            vote = consensus.close_if_decided(vote)
+            winner = next((c for c in vote.choices if c["key"] == vote.winner_key), None)
+            if vote.status == Vote.Status.CLOSED and winner and winner["option_id"] == str(option.id):
+                won = True
+        if not won:
+            raise RuleError("vote_required", "That option has not won a group vote yet.")
+        if Purchase.objects.filter(group_id=member.group_id, option=option, state__in=OPEN_PURCHASE_STATES).exists():
+            raise RuleError("purchase_exists", "A purchase for this option is already open.")
+
+        ids = list(dict.fromkeys(args["member_ids"]))
+        buyers = [self._own(Member, i, member, "member") for i in ids]
+        if len(buyers) < 2 or any(b.status != Member.Status.ACTIVE for b in buyers):
+            raise RuleError("invalid_arguments", "Choose at least two active members.")
+        if len(buyers) > option.capacity:
+            raise RuleError("over_capacity", f"This option holds {option.capacity} people, not {len(buyers)}.")
+        total = option.total_cents
+        if total > MAX_PURCHASE_CENTS or ceil_split(total, len(buyers)) > MAX_SHARE_CENTS:      # R12
+            raise RuleError("over_limit", "Above the demo limits ($2,000 per share, $10,000 per purchase).")
+        for b in buyers:
+            open_now = Share.objects.filter(member=b, superseded_by__isnull=True, purchase__state__in=OPEN_PURCHASE_STATES,
+                                            status__in=[S.INVITED, S.VIEWING, S.HELD, S.CARD_FAILED]).count()
+            if open_now >= MAX_OPEN_PURCHASES_PER_MEMBER:
+                raise RuleError("too_many_open_purchases", f"{b.display_name} is already in {open_now} open purchases.")
+
+        purchase = Purchase.objects.create(group_id=member.group_id, option=option, total_cents=total,
+                                           currency=option.currency, deadline_at=timezone.now() + timedelta(hours=args["deadline_hours"]))
+        # Equal shares. Any leftover cents go to the organizer, recorded as rounding_adj_cents.
+        base, leftover = divmod(total, len(buyers))
+        organizer_id = member.group.organizer_id
+        carrier = next((b for b in buyers if b.id == organizer_id), buyers[0])
+        shares = [Share.objects.create(purchase=purchase, member=b, amount_cents=base + (leftover if b == carrier else 0),
+                                       rounding_adj_cents=leftover if b == carrier else 0) for b in buyers]
+        log_event(EventType.PURCHASE_CREATED, actor=f"member:{member.id}", group_id=member.group_id, purchase_id=purchase.id,
+                  payload={"option": option.title, "shares": len(shares), "total_cents": total})
+        transition_purchase(purchase.id, P.VOTING, actor="rules", reason="vote_won")
+        transition_purchase(purchase.id, P.COLLECTING, actor="rules", reason="shares_created")
+        sent = _send_consent_links(shares)
+        return {"purchase_id": str(purchase.id), "deadline_at": ser.iso(purchase.deadline_at),
+                "shares_created": len(shares), "consent_links_sent": sent}
+
+    def _check_status(self, member: Member, args: dict) -> dict:
+        if "purchase_id" in args:
+            purchase = self._own(Purchase, args["purchase_id"], member, "purchase")
+        else:
+            purchase = Purchase.objects.filter(group_id=member.group_id).order_by("-created_at").first()
+            if purchase is None:
+                raise RuleError("not_found", "There is no purchase yet.")
+        full = ser.purchase_json(purchase)
+        # counts only: no member names, no individual statuses, nothing private
+        return {"purchase_id": full["id"], "state": full["state"], "total_cents": full["total_cents"],
+                "held_cents": full["held_cents"], "deadline_at": full["deadline_at"], **full["counts"]}
+
+    def _propose_fallback(self, member: Member, args: dict) -> dict:
+        raise RuleError("not_implemented", "Fallbacks are not built yet.")           # milestone M6
+
+    def _add_expense(self, member: Member, args: dict) -> dict:
+        raise RuleError("not_implemented", "Expenses are not built yet.")            # milestone M5
+
+
+def ceil_split(total: int, people: int) -> int:
+    return consensus.ceil_div(total, people)
