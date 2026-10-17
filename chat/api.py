@@ -51,3 +51,17 @@ def group_messages(request, gid):
     rows = (ChatMessage.objects.filter(group_id=gid, seq__gt=after_seq).select_related("member").order_by("seq"))
     visible = [m for m in rows[:MAX_PAGE] if m.direction == "in" or m.member_id in (None, member.id)]   # DMs only to their owner
     return Response({"messages": [message_json(m) for m in visible]})
+
+
+@api_view(["POST"])
+@api_errors
+def demo_share(request, gid):
+    """DEMO_MODE + fake engine only: hold or decline your own share without the consent page (all simulated)."""
+    member = current_member(request, gid)
+    action = request.data.get("action") if isinstance(request.data, dict) else None
+    if action not in ("hold", "decline"):
+        raise ApiError("invalid_request", "action must be hold or decline.")
+    try:
+        return Response(services.demo_share_action(member, action))
+    except services.DemoUnavailable as e:
+        raise ApiError("demo_unavailable", str(e), 409)

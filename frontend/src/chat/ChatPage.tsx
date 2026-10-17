@@ -86,6 +86,16 @@ export default function ChatPage() {
 
   const reply = useCallback((t: string) => { send(t).catch(() => undefined); }, [send]);
 
+  const demoShare = useCallback(async (action: "hold" | "decline") => {
+    try {
+      await api.post(`/groups/${groupId}/chat/demo/share`, { action });
+      if (action === "decline") setTypingSince(Date.now());
+      await poll();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't update your share.");
+    }
+  }, [groupId, poll]);
+
   const consentUrl = useMemo(() => {
     const dm = [...messages].reverse().find((m) => m.private && /\/c\/\S+/.test(m.text));
     return dm?.text.match(/\/c\/\S+/)?.[0];
@@ -113,7 +123,7 @@ export default function ChatPage() {
       {messages.length === 0 ? (
         <p className="empty">No messages yet. Try: “@tandem can you find us a cabin? like 150-200 each”</p>
       ) : null}
-      <MessageList messages={messages} meId={me.id} onReply={reply} consentUrl={consentUrl} />
+      <MessageList messages={messages} meId={me.id} onReply={reply} consentUrl={consentUrl} onDemoShare={demoShare} />
       <TypingIndicator key={typingSince ?? 0} since={typingSince} />
       <div ref={bottom} />
       <QuickReplies replies={lastQuick} onReply={reply} />

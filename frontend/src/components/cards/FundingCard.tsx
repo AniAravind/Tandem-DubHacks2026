@@ -5,7 +5,7 @@ import { countdown, when } from "../../chat/format";
 import { SimBadge, type CardProps } from "./common";
 import { SHARE_STATUS } from "./status";
 
-export function FundingCard({ data, consentUrl }: CardProps<FundingCardData>) {
+export function FundingCard({ data, consentUrl, meId, onDemoShare }: CardProps<FundingCardData>) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -14,6 +14,8 @@ export function FundingCard({ data, consentUrl }: CardProps<FundingCardData>) {
   const active = data.members.filter((m) => !["declined", "released"].includes(m.status));
   const held = active.filter((m) => m.status === "held" || m.status === "captured").length;
   const tally = (s: string[]) => active.filter((m) => s.includes(m.status)).length;
+  const mine = data.members.find((m) => m.id === meId);
+  const myTurn = mine && ["invited", "viewing", "card_failed"].includes(mine.status);
   const lowTime = new Date(data.deadline_at).getTime() - now < 2 * 3600 * 1000;
   return (
     <article className="card funding-card" aria-label={`Funding for ${data.title}`}>
@@ -46,7 +48,12 @@ export function FundingCard({ data, consentUrl }: CardProps<FundingCardData>) {
         Deadline {when(data.deadline_at)} · <span className="money">{countdown(data.deadline_at, now)}</span>
       </p>
       <p>Nobody is charged unless all {active.length} are in.</p>
-      {consentUrl ? <a className="btn primary" href={consentUrl}>Hold my share →</a> : null}
+      {myTurn && consentUrl?.startsWith("/c/demo-") && onDemoShare ? (
+        <div className="card-actions">
+          <button className="btn primary" onClick={() => onDemoShare("hold")}>Hold my share</button>
+          <button className="btn" onClick={() => onDemoShare("decline")}>Not for me</button>
+        </div>
+      ) : myTurn && consentUrl ? <a className="btn primary" href={consentUrl}>Hold my share →</a> : null}
     </article>
   );
 }
