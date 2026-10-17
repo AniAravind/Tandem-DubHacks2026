@@ -78,3 +78,7 @@ if not DEBUG:
 PAYMENTS_GATEWAY = os.getenv("PAYMENTS_GATEWAY", "simulated")
 DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+
+# Merchant: "direct" = in-process stand-in (tests, and until the real mock merchant is on main); "http" = real calls.
+MERCHANT_MODE = os.getenv("MERCHANT_MODE", "direct")
+MERCHANT_BASE_URL = os.getenv("MERCHANT_BASE_URL", "http://localhost:8000/merchants")

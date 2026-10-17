@@ -7,7 +7,6 @@ import json
 from datetime import timedelta
 from io import StringIO
 
-from django.core import signing
 from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
@@ -303,12 +302,14 @@ class CreatePurchaseTests(EngineBase):
         self.assertEqual(result["error"]["code"], "over_limit")
 
     def test_consent_links_are_private_and_signed(self):
+        from payments.services import read_consent_token         # Ani's reader: proves the link is a real consent token
         purchase, _ = self.make_open_purchase()
         share = purchase.shares.get(member=self.members["Priya"])
         link = rules.consent_link(share)
         self.assertIn("/c/", link)
-        payload = json.loads(signing.TimestampSigner(salt="consent").unsign(link.split("/c/")[1]))
-        self.assertEqual(payload, {"share_id": str(share.id), "member_id": str(share.member_id), "purchase_version": 1})
+        opened = read_consent_token(link.split("/c/")[1], header_member_id=str(share.member_id))
+        self.assertEqual(opened["share"].id, share.id)
+        self.assertEqual(opened["payload"]["member_id"], str(share.member_id))
         # links are never returned to the AI and never posted in the group chat
         self.assertNotIn("/c/", json.dumps(self.run_tool("check_status", {})))
         from chat.models import ChatMessage
