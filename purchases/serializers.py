@@ -12,7 +12,8 @@ from datetime import timezone as dt_timezone
 from core.events import verify_chain
 from core.models import EventLog, Group, Member
 from payments.models import Hold
-from purchases.models import Expense, ExpenseSplit, Option, Purchase, Share, Vote
+from purchases import ledger
+from purchases.models import Expense, Option, Purchase, Share, Vote
 
 S = Share.Status
 
@@ -120,19 +121,16 @@ def purchase_json(purchase: Purchase) -> dict:
 
 # ---------------------------------------------------------------- ledger
 def ledger_json(group: Group) -> dict:
-    members = {m.id: m for m in group.members.all()}
-    net = {mid: 0 for mid in members}
     expenses = []
-    for e in Expense.objects.filter(group=group).select_related("payer").order_by("created_at"):
-        splits = list(e.splits.all())
-        net[e.payer_id] = net.get(e.payer_id, 0) + e.amount_cents       # what they paid out
-        for sp in splits:
-            net[sp.member_id] = net.get(sp.member_id, 0) - sp.amount_cents   # what they owe
+    for e in Expense.objects.filter(group=group).select_related("payer").prefetch_related("splits").order_by("created_at"):
         expenses.append({"id": str(e.id), "description": e.description, "payer": e.payer.display_name,
-                         "amount_cents": e.amount_cents, "split_mode": e.split_mode, "split_count": len(splits)})
-    balances = [{"member_id": str(mid), "display_name": members[mid].display_name, "net_cents": cents}
-                for mid, cents in sorted(net.items(), key=lambda kv: -kv[1]) if mid in members]
-    return {"expenses": expenses, "balances": balances, "net_total_cents": sum(b["net_cents"] for b in balances)}
+                         "amount_cents": e.amount_cents, "split_mode": e.split_mode, "split_count": len(e.splits.all())})
+    balances = ledger.compute_balances(group)
+    names = {b["member_id"]: b["display_name"] for b in balances}
+    settlements = [{"from": names[p["from"]], "to": names[p["to"]], "amount_cents": p["amount_cents"]}
+                   for p in ledger.settle_up(balances)]
+    return {"expenses": expenses, "balances": balances, "net_total_cents": sum(b["net_cents"] for b in balances),
+            "settle_up": settlements}
 
 
 # ---------------------------------------------------------------- events

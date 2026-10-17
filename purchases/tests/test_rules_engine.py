@@ -143,11 +143,9 @@ class ValidationTests(EngineBase):
             self.run_tool("check_status", {})
         self.assertEqual(self.run_tool("check_status", {})["error"]["code"], "rate_limited")
 
-    def test_unbuilt_tools_say_not_implemented(self):
+    def test_unbuilt_tool_says_not_implemented(self):
         purchase, _ = self.make_open_purchase()
         result = self.run_tool("propose_fallback", {"purchase_id": str(purchase.id), "reason": "dropout"})
-        self.assertEqual(result["error"]["code"], "not_implemented")
-        result = self.run_tool("add_expense", {"amount": 60, "payer_id": str(self.maya.id), "split": {"mode": "equal"}})
         self.assertEqual(result["error"]["code"], "not_implemented")
 
 

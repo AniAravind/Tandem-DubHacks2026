@@ -37,7 +37,7 @@ from payments.gateway import GatewayError, Money, get_gateway
 from merchant import signing as agent_signing
 from merchant.models import SignedRequest
 from payments.models import AgentToken, Consent, Hold, Mandate
-from purchases import consensus, serializers as ser, toolschema
+from purchases import consensus, ledger, serializers as ser, toolschema
 from purchases.merchant_client import get_merchant_client, parse_signature_input
 from purchases.models import Booking, Option, Purchase, Refund, Share, Vote
 from purchases.states import IllegalTransition, transition_purchase, transition_share
@@ -715,7 +715,17 @@ class RulesEngine:
         raise RuleError("not_implemented", "Fallbacks are not built yet.")           # milestone M6
 
     def _add_expense(self, member: Member, args: dict) -> dict:
-        raise RuleError("not_implemented", "Expenses are not built yet.")            # milestone M5
+        """The agent talks in dollars; the ledger works in whole cents."""
+        split = args["split"]
+        custom = split.get("custom_amounts")
+        try:
+            result = ledger.add_expense(
+                member.group, args["payer_id"], round(args["amount"] * 100), args.get("description", ""), split["mode"],
+                split.get("member_ids"), {k: round(v * 100) for k, v in custom.items()} if custom else None,
+                actor=f"member:{member.id}")
+        except ledger.LedgerError as e:
+            raise RuleError(e.code, e.message)
+        return {k: result[k] for k in ("expense_id", "description", "amount_cents", "per_person_cents", "split_count")}
 
 
 def ceil_split(total: int, people: int) -> int:
