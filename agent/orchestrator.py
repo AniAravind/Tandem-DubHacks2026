@@ -6,11 +6,12 @@ import json
 import logging
 import pathlib
 
-from agent import cards
+from agent import cards, safety
 from agent.context import build_messages
 from agent.validate import validate
 from chat.adapters.base import AgentMessage
 from core.events import EventType, log_event
+from chat.models import ChatMessage
 from core.models import Group
 from purchases.models import Option, Purchase, Vote
 
@@ -140,7 +141,20 @@ class Orchestrator:
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
         return self.compose(text)
 
+    def safe(self, text: str) -> str:
+        tool_cents = set().union(*(safety.cents_in(d) for _, d in self.tool_results)) if self.tool_results else set()
+        typed = set().union(*(safety.amounts_in(t) for t in ChatMessage.objects.filter(group=self.group, direction="in")
+                              .order_by("-seq").values_list("text_redacted", flat=True)[:50]))
+        caps = {c for c in (m.budget_cap_cents for m in self.group.members.all()) if c is not None}
+        out, reason = safety.filter_text(text, tool_cents, typed, caps)
+        if reason:
+            log_event(EventType.AGENT_TOOL_REJECTED, actor="agent", group_id=self.group.id,
+                      payload={"tool": "output", "reason": reason})
+            return safety.SAFE_TEXT if self.tool_results else safety.SAFE_TEXT_NO_TOOLS
+        return out
+
     def compose(self, text: str | None) -> list[AgentMessage]:
+        text = self.safe(text) if text else text
         labels = {o["id"]: o["title"] for name, d in self.tool_results if name == "search_options" for o in d.get("options", [])}
         attached = [m for name, d in self.tool_results for m in cards.cards_for(name, d, labels, self.group.timezone)]
         out = [AgentMessage(text=text)] if text else []
@@ -151,7 +165,17 @@ class Orchestrator:
         return out + attached
 
 
+def latest_text(group_id, member_id) -> str:
+    m = ChatMessage.objects.filter(group_id=group_id, member_id=member_id, direction="in").order_by("-seq").first()
+    return m.text_redacted if m else ""
+
+
 def run(group_id, inbound, event: dict | None = None, **kw) -> list[AgentMessage]:
     """Entry point used by chat.services. inbound is an InboundMessage (or None for server events)."""
     actor = f"member:{inbound.member_id}" if inbound else "agent"
+    if inbound:
+        refusal = safety.guard(inbound.text or latest_text(group_id, inbound.member_id))
+        if refusal:
+            log_event(EventType.AGENT_TOOL_REJECTED, actor=actor, group_id=group_id, payload={"tool": "guard", "reason": "injection"})
+            return [AgentMessage(text=refusal)]
     return Orchestrator(group_id, **kw).run(actor, event)
