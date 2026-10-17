@@ -127,3 +127,9 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Tandem config (added for /api/health)
+PAYMENTS_GATEWAY = "simulated"
+DEMO_MODE = True
+REDIS_URL = "redis://localhost:6379/0"
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
