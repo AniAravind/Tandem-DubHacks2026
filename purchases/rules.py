@@ -35,9 +35,9 @@ from core.events import EventType, event_context, log_event
 from core.models import EventLog, Member
 from payments.gateway import GatewayError, Money, get_gateway
 from merchant import signing as agent_signing
-from merchant.models import SignedRequest
+from merchant.models import Listing, SignedRequest
 from payments.models import AgentToken, Consent, Hold, Mandate
-from purchases import consensus, ledger, serializers as ser, toolschema
+from purchases import consensus, fallbacks, ledger, serializers as ser, toolschema
 from purchases.merchant_client import get_merchant_client, parse_signature_input
 from purchases.models import Booking, Option, Purchase, Refund, Share, Vote
 from purchases.states import IllegalTransition, transition_purchase, transition_share
@@ -75,9 +75,10 @@ def _iso_utc(dt) -> str:
 
 
 def _active_shares(purchase: Purchase):
-    """Shares that count toward funding: not replaced by a newer share, and the member is still active."""
+    """Shares that count toward funding: not replaced by a newer share, not declined/released/refunded,
+    and the member is still active. (Somebody who said "not for me" is no longer part of the all-or-nothing.)"""
     return (Share.objects.filter(purchase=purchase, superseded_by__isnull=True, member__status=Member.Status.ACTIVE)
-            .select_related("member"))
+            .exclude(status__in=(S.DECLINED, S.RELEASED, S.REFUNDED)).select_related("member"))
 
 
 def _group_counts(purchase: Purchase) -> dict:
@@ -426,6 +427,7 @@ def _place_hold_locked(gateway, purchase, share, member, consent_id, agent_token
         if share.status == S.CARD_FAILED:
             transition_share(share.id, S.VIEWING, actor="rules", reason="card_retry")
         transition_share(share.id, S.HELD, actor="rules", hold_id=hold.gateway_hold_id)
+        _retire_superseded_money(gateway, share, purchase, "replaced_by_new_hold")      # after a fallback: free the old hold
         check_funded(purchase.id)                       # may flip the whole purchase to funded
         share.refresh_from_db()
         return {"share_status": share.status, "hold": _hold_dict(hold),
@@ -464,13 +466,21 @@ def _release_share_money(gateway, share: Share, purchase: Purchase, reason: str)
             mandate.save(update_fields=["status", "updated_at"])
 
 
+def _retire_superseded_money(gateway, share: Share, purchase: Purchase, reason: str) -> None:
+    """A fallback replaces a member's share with a new one. The old share keeps its hold (status HELD) until the
+    member confirms the new amount. Once they do (or back out), this lets the old one go. Caller holds the locks."""
+    for old in Share.objects.select_for_update().filter(superseded_by=share, status=S.HELD).exclude(pk=share.pk):
+        _release_share_money(gateway, old, purchase, reason)           # does nothing if the hold was already moved
+        transition_share(old.id, S.RELEASED, actor="rules", reason=reason)
+
+
 def release_all(purchase_id, reason: str) -> dict:
     """Give everyone's money back (nothing was ever charged) and end the purchase."""
     gateway = get_gateway()
     with transaction.atomic():
         purchase = Purchase.objects.select_for_update().get(pk=purchase_id)
         released = 0
-        for share in Share.objects.select_for_update().filter(purchase=purchase, superseded_by__isnull=True):
+        for share in Share.objects.select_for_update().filter(purchase=purchase):      # includes replaced shares still holding money
             if share.status == S.HELD:
                 _release_share_money(gateway, share, purchase, reason)
                 released += 1
@@ -498,11 +508,197 @@ def member_withdraw(share_id, reason: str) -> dict:
                 transition_share(share.id, S.DECLINED, actor="rules", reason=reason)
             else:
                 raise RuleError("illegal_state", f"A {share.status} share cannot be withdrawn.")
+            with event_context(purchase.group_id, purchase.id):
+                _retire_superseded_money(gateway, share, purchase, reason)      # backing out also frees a replaced share's hold
     except (RuleError, IllegalTransition) as e:
         return _error(getattr(e, "code", "illegal_state"), str(e))
     _post_group_update(purchase_id)
+    transaction.on_commit(lambda: _notify_dropout(purchase_id))
     share.refresh_from_db()
     return {"share_status": share.status, "group_counts": _group_counts(purchase)}
+
+
+def _notify_dropout(purchase_id) -> None:
+    """Tell the chat side that somebody dropped, so the agent can propose fallbacks. Never breaks the withdrawal."""
+    try:
+        purchase = Purchase.objects.get(pk=purchase_id)
+        if purchase.state != P.COLLECTING:
+            return
+        from chat.services import on_share_declined
+        on_share_declined(purchase.group_id, purchase.id)
+    except Exception:                                      # noqa: BLE001
+        log.exception("could not ask for fallbacks on purchase %s", purchase_id)
+
+
+# ======================================================================================================
+# Fallbacks and share changes (milestone M6)
+# ======================================================================================================
+def apply_fallback(vote_id) -> dict:
+    """The group voted on a fallback. Apply the winner. Safe to call more than once: the second call does nothing."""
+    vote = Vote.objects.get(pk=vote_id)
+    if vote.purpose != Vote.Purpose.FALLBACK or vote.purchase_id is None:
+        return _error("not_a_fallback_vote", "That is not a fallback vote.")
+    vote = consensus.close_if_decided(vote)
+    if vote.status != Vote.Status.CLOSED:
+        return _error("vote_open", "The vote is still open.")
+    choice = next((c for c in vote.choices if c["key"] == vote.winner_key), None)
+    if choice is None:                                      # R3: no winner (a tie or too few votes), nothing changes
+        return _error("no_winner", "The vote had no winner, so nothing changed.")
+    kind = choice["option_id"]
+
+    new_shares = []
+    with transaction.atomic():
+        purchase = Purchase.objects.select_for_update().select_related("option", "group").get(pk=vote.purchase_id)
+        if EventLog.objects.filter(type=EventType.FALLBACK_APPLIED, purchase_id=purchase.id,
+                                   payload__vote_id=str(vote.id)).exists():
+            return {"status": "already_applied", "kind": kind}
+        if purchase.state != P.COLLECTING:
+            return _error("illegal_state", f"Purchase is {purchase.state}, not collecting.")
+        remaining = fallbacks.remaining_shares(purchase)
+        if not remaining:
+            return _error("nobody_left", "Nobody is left in this purchase.")
+
+        if kind == "replacement":
+            purchase.deadline_at = purchase.deadline_at + fallbacks.REPLACEMENT_EXTENSION
+            purchase.save(update_fields=["deadline_at", "updated_at"])
+            log_event(EventType.FALLBACK_APPLIED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
+                      payload={"vote_id": str(vote.id), "kind": kind, "deadline_at": ser.iso(purchase.deadline_at)})
+            summary = {"status": "applied", "kind": kind, "deadline_at": ser.iso(purchase.deadline_at)}
+            message = "More time: the deadline moved 12 hours so someone can be invited to the empty spot."
+        else:
+            people = len(remaining)
+            if kind == "cheaper":
+                listing = Listing.objects.select_related("merchant").filter(
+                    merchant__slug=choice["merchant_slug"], ref=choice["listing_ref"], available=True).first()
+                if listing is None:
+                    return _error("sold_out", "That listing is no longer available.")
+                if listing.capacity < people:
+                    return _error("over_capacity", f"{listing.title} does not sleep {people}.")
+                old = purchase.option
+                purchase.option = Option.objects.create(
+                    group=purchase.group, merchant_slug=listing.merchant.slug, listing_ref=listing.ref, category=old.category,
+                    title=listing.title, total_cents=fallbacks.listing_total(listing, people), capacity=listing.capacity,
+                    features=listing.features, currency=old.currency,
+                    meta={**listing.meta, **{k: v for k, v in old.meta.items() if k in ("check_in", "check_out")}})
+                purchase.total_cents = purchase.option.total_cents
+            if consensus.ceil_div(purchase.total_cents, people) > MAX_SHARE_CENTS:
+                return _error("over_limit", "Above the $2,000 per-share demo limit.")
+            purchase.version += 1
+            purchase.save(update_fields=["option", "total_cents", "version", "updated_at"])
+            transition_purchase(purchase.id, P.COLLECTING, actor="rules", reason="fallback_applied", vote_id=str(vote.id))
+
+            # New equal shares; leftover cents go to the organizer (or the first member), like create_purchase.
+            base, leftover = divmod(purchase.total_cents, people)
+            carrier = next((s for s in remaining if s.member_id == purchase.group.organizer_id), remaining[0])
+            for old_share in remaining:
+                extra = leftover if old_share.id == carrier.id else 0
+                # Only one current share per member is allowed, so park the old one (pointing at itself) first.
+                Share.objects.filter(pk=old_share.pk).update(superseded_by=old_share)
+                fresh = Share.objects.create(
+                    purchase=purchase, member=old_share.member, amount_cents=base + extra, rounding_adj_cents=extra,
+                    purchase_version=purchase.version, status=S.INVITED if old_share.status == S.INVITED else S.VIEWING)
+                Share.objects.filter(pk=old_share.pk).update(superseded_by=fresh)
+                Share.objects.filter(superseded_by=old_share).exclude(pk=old_share.pk).update(superseded_by=fresh)
+                if old_share.status != S.HELD:               # a held share keeps its hold until the member confirms
+                    transition_share(old_share.id, S.RELEASED, actor="rules", reason="replaced_by_fallback")
+                new_shares.append(fresh)
+            log_event(EventType.FALLBACK_APPLIED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
+                      payload={"vote_id": str(vote.id), "kind": kind, "version": purchase.version,
+                               "per_person_cents": base, "shares": people, "total_cents": purchase.total_cents})
+            summary = {"status": "applied", "kind": kind, "version": purchase.version, "per_person_cents": base,
+                       "shares": people}
+            message = (f"Plan updated: {purchase.option.title}, {ser.money(base)} each for {people} people. "
+                       "Everyone confirms their new amount before anything is held. Nobody is charged until all are in.")
+
+    summary["consent_links_sent"] = _send_consent_links(new_shares) if new_shares else 0
+    _post(purchase.group_id, AgentMessage(text=message))
+    _post_group_update(purchase.id)
+    return summary
+
+
+def previous_cap_cents(share: Share):
+    """The spending limit this member already approved on the share this one replaced (None if they had no hold)."""
+    old = Share.objects.filter(superseded_by=share, status=S.HELD).exclude(pk=share.pk).first()
+    hold = old.holds.filter(status=Hold.Status.AUTHORIZED).select_related("mandate").first() if old else None
+    return hold.mandate.cap_cents if hold else None
+
+
+def apply_share_change(share_id, consent_id) -> dict:
+    """The member confirmed their new share amount (Ani's reconfirm endpoint calls this with the consent they gave).
+
+    Same listing and the new amount fits under the cap they already approved: the existing hold is adjusted.
+    New listing, no earlier hold, or an amount above the old cap: that needs a NEW mandate and a new hold, which
+    only works if the consent carries a cap high enough (R5, R6). The old hold is released once the new one is in.
+    """
+    gateway = get_gateway()
+    try:
+        with transaction.atomic():
+            purchase_id = Share.objects.values_list("purchase_id", flat=True).get(pk=share_id)
+            purchase = Purchase.objects.select_for_update().select_related("option").get(pk=purchase_id)
+            share = Share.objects.select_for_update().select_related("member").get(pk=share_id)
+            member = share.member
+            if share.status == S.HELD and not share.superseded_by_id:           # same request twice -> same answer
+                return {"share_status": share.status, "amount_cents": share.amount_cents, "simulated": True,
+                        "group_counts": _group_counts(purchase)}
+            if member.status != Member.Status.ACTIVE or member.group_id != purchase.group_id:     # R1
+                raise RuleError("not_a_member", "Only active members of this group can confirm a share.")
+            if purchase.state != P.COLLECTING:                                                      # R2
+                raise RuleError("illegal_state", f"Purchase is {purchase.state}, not collecting.")
+            if share.superseded_by_id:
+                raise RuleError("share_superseded", "This share was replaced by a newer one.")
+            if share.status not in (S.INVITED, S.VIEWING, S.CARD_FAILED):
+                raise RuleError("illegal_state", f"Share is {share.status}; there is nothing to confirm.")
+            if timezone.now() >= purchase.deadline_at:                                              # R7
+                raise RuleError("deadline_passed", "The deadline for this purchase has passed.")
+            consent = Consent.objects.filter(pk=consent_id, share=share, member=member).first()     # R4
+            if consent is None:
+                raise RuleError("consent_required", "No consent on file for this share.")
+            if consent.amount_cents != share.amount_cents:
+                raise RuleError("consent_mismatch", "The consent was for a different amount.")
+
+            old = Share.objects.select_for_update().filter(superseded_by=share, status=S.HELD).exclude(pk=share.pk).first()
+            old_hold = old.holds.filter(status=Hold.Status.AUTHORIZED).select_related("mandate").first() if old else None
+            option = purchase.option
+            adjustable = (old_hold is not None and old_hold.mandate.merchant_slug == option.merchant_slug
+                          and old_hold.mandate.listing_ref == option.listing_ref
+                          and share.amount_cents <= old_hold.mandate.cap_cents)
+            if adjustable:
+                with event_context(purchase.group_id, purchase.id):
+                    resp = gateway.adjust_hold(old_hold.gateway_hold_id, Money(share.amount_cents, purchase.currency),
+                                               _idem_key(share.id, "adjust", purchase.version))
+                    if resp["status"] != "AUTHORIZED":
+                        raise RuleError(resp.get("reason", "hold_rejected"), "The bank would not change the hold.")
+                    old_hold.share, old_hold.amount_cents = share, share.amount_cents          # the hold follows the member
+                    old_hold.save(update_fields=["share", "amount_cents", "updated_at"])
+                    old_hold.mandate.share = share
+                    old_hold.mandate.save(update_fields=["share", "updated_at"])
+                    if share.status != S.VIEWING:
+                        transition_share(share.id, S.VIEWING, actor="rules", reason="reconfirm")
+                    transition_share(share.id, S.HELD, actor="rules", hold_id=old_hold.gateway_hold_id, reason="reconfirmed")
+                    _retire_superseded_money(gateway, share, purchase, "replaced_by_new_hold")    # old share: HELD -> RELEASED
+                check_funded(purchase.id)
+                share.refresh_from_db()
+                result = {"share_status": share.status, "amount_cents": share.amount_cents, "hold": _hold_dict(old_hold),
+                          "group_counts": _group_counts(purchase), "simulated": True}
+                transaction.on_commit(lambda: _post_group_update(purchase.id))
+                return result
+
+            # A new mandate is needed, so the consent itself must allow this amount.
+            if consent.cap_cents < share.amount_cents:
+                raise RuleError("new_consent_required", "This amount is above the limit you approved. "
+                                                        "Approve a higher limit to continue.")
+            token = (AgentToken.objects.filter(member=member, status="active", expires_at__gt=timezone.now())
+                     .order_by("-created_at").first())
+            if token is None:
+                raise RuleError("token_inactive", "The payment token is missing, revoked, or expired.")
+            result = place_hold(share.id, consent.id, token.id, consent.cap_cents)            # new mandate + new hold
+            if "error" in result:
+                return result
+            return {**result, "amount_cents": share.amount_cents, "simulated": True}
+    except RuleError as e:
+        return _error(e.code, e.message)
+    except GatewayError as e:
+        return _error(e.code, e.detail or "gateway error")
 
 
 # ======================================================================================================
@@ -712,7 +908,11 @@ class RulesEngine:
                 "held_cents": full["held_cents"], "deadline_at": full["deadline_at"], **full["counts"]}
 
     def _propose_fallback(self, member: Member, args: dict) -> dict:
-        raise RuleError("not_implemented", "Fallbacks are not built yet.")           # milestone M6
+        purchase = self._own(Purchase, args["purchase_id"], member, "purchase")
+        try:
+            return fallbacks.propose(purchase, args["reason"], actor=f"member:{member.id}")
+        except fallbacks.FallbackError as e:
+            raise RuleError(e.code, e.message)
 
     def _add_expense(self, member: Member, args: dict) -> dict:
         """The agent talks in dollars; the ledger works in whole cents."""

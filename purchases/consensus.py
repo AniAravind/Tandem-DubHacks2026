@@ -25,7 +25,7 @@ from django.utils import timezone
 from core.events import EventType, log_event
 from core.models import Member
 from merchant.models import Listing
-from purchases.models import Ballot, Vote
+from purchases.models import Ballot, Share, Vote
 
 TOP_N = 3
 
@@ -36,6 +36,17 @@ def ceil_div(a: int, b: int) -> int:
 
 def active_members(group_id) -> list[Member]:
     return list(Member.objects.filter(group_id=group_id, status=Member.Status.ACTIVE).order_by("created_at", "display_name"))
+
+
+def eligible_voters(vote: Vote) -> list[Member]:
+    """Who may vote. Normally every active member. On a fallback vote, only people still in the purchase
+    (somebody who just said "not for me" does not get a say in how the rest of the group pays)."""
+    if vote.purpose == Vote.Purpose.FALLBACK and vote.purchase_id:
+        still_in = Share.objects.filter(purchase_id=vote.purchase_id, superseded_by__isnull=True,
+                                        status__in=(Share.Status.INVITED, Share.Status.VIEWING, Share.Status.HELD,
+                                                    Share.Status.CARD_FAILED)).values("member_id")
+        return list(Member.objects.filter(id__in=still_in, status=Member.Status.ACTIVE).order_by("created_at", "display_name"))
+    return active_members(vote.group_id)
 
 
 @dataclass
@@ -137,18 +148,21 @@ def quorum_for(active_count: int) -> int:
 
 def close_if_decided(vote: Vote) -> Vote:
     """
-    Close the vote when time is up or everybody has voted. The winner needs quorum (more than half of the
+    Close the vote when time is up, everybody has voted, or one option already has a majority of the voters
+    (nobody can catch up after that, so waiting would only slow the group down). The winner needs quorum (more than half of the
     group voted) and strictly more votes than the runner-up. A tie closes the vote with no winner.
     """
     if vote.status != Vote.Status.OPEN:
         return vote
-    ballots = Ballot.objects.filter(vote=vote)
+    eligible = eligible_voters(vote)
+    ballots = Ballot.objects.filter(vote=vote, member__in=eligible)
     voted = ballots.count()
-    everyone = voted >= len(active_members(vote.group_id))
-    if not (everyone or timezone.now() >= vote.closes_at):
-        return vote
+    everyone = voted >= len(eligible)
     counts = sorted(ballots.values("choice_key").annotate(n=Count("id")).values_list("choice_key", "n"),
                     key=lambda kv: -kv[1])
+    majority = bool(counts) and counts[0][1] >= vote.quorum        # more than half already agree: nobody can overtake them
+    if not (everyone or majority or timezone.now() >= vote.closes_at):
+        return vote
     winner = ""
     if voted >= vote.quorum and counts and (len(counts) == 1 or counts[0][1] > counts[1][1]):
         winner = counts[0][0]

@@ -201,17 +201,31 @@ class ConsentService:
         return {"share_status": result.get("share_status", "declined")}
 
     def reconfirm(self, share_id, assertion: dict) -> dict:
+        """A passkey (or demo OTP) tap on a changed share: record exactly what was approved, then let the rules apply it."""
         share = Share.objects.select_related("member", "purchase").get(pk=share_id)
-        self._verify_assertion(share, assertion)
+        method = self._verify_assertion(share, assertion)
         from purchases import rules
         if not hasattr(rules, "apply_share_change"):
             if not settings.DEMO_MODE:
                 raise ConsentError("not_ready", "Share changes are not available yet.", 501)
             return {"share_status": "held", "amount_cents": 18500, "simulated": True}
         latest = share.consents.order_by("-accepted_at").first()
-        if latest is None:
-            raise ConsentError("consent_required", "Approve a new limit first.")
-        return rules.apply_share_change(share.id, latest.id)
+        if latest is None or latest.amount_cents != share.amount_cents:
+            # A tap only re-approves the SAME limit the member already gave. A bigger limit needs the full consent page.
+            cap = rules.previous_cap_cents(share)
+            if cap is None or share.amount_cents > cap:
+                raise ConsentError("consent_required", "Approve a new limit first.")
+            latest = Consent.objects.create(
+                member=share.member, share=share, consent_text_version=VERSION,
+                consent_text_sha256=self._payload(share)["consent_text_sha256"], amount_cents=share.amount_cents,
+                cap_cents=cap, method=method, accepted_at=timezone.now())
+            log_event(EventType.CONSENT_ACCEPTED, actor=f"member:{share.member_id}", group_id=share.purchase.group_id,
+                      purchase_id=share.purchase_id, payload={"share_id": str(share.id), "method": method,
+                                                              "amount_cents": share.amount_cents, "reconfirm": True})
+        result = rules.apply_share_change(share.id, latest.id)
+        if "error" in result:
+            raise ConsentError(result["error"]["code"], result["error"]["message"], 409)
+        return result
 
     def _verify_assertion(self, share, assertion: dict) -> str:
         assertion = assertion or {}

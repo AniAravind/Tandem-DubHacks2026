@@ -184,7 +184,7 @@ class ReleaseTests(MoneyCoreBase):
         approve("Priya", parts)
         result = rules.member_withdraw(parts["Maya"][0].id, "not_for_me")
         self.assertEqual(result["share_status"], "released")
-        self.assertEqual(result["group_counts"], {"held": 1, "active": 6})
+        self.assertEqual(result["group_counts"], {"held": 1, "active": 5})      # the member who backed out is no longer counted
         purchase.refresh_from_db()
         self.assertEqual(purchase.state, "collecting")             # the rest of the group is untouched
 
