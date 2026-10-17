@@ -4,7 +4,6 @@ import "./styles/tokens.css";
 import Chat from "./chat/ChatPage";
 
 const Sim = () => <span className="sim-badge">🧪 SIMULATED PAYMENTS</span>;
-const Consent = () => <main><h1>Consent</h1><Sim /></main>;        // Ani replaces
 const Dashboard = () => <main><h1>Trip dashboard</h1><Sim /></main>; // Rishab replaces
 
 export default function App() {
