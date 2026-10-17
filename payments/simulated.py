@@ -34,7 +34,45 @@ class SimulatedVisaAgentGateway:
         if cls._default is None:
             from core.events import log_event_simulated
             cls._default = cls(on_event=log_event_simulated)
+            cls._default.hydrate_from_db()
         return cls._default
+
+    def hydrate_from_db(self) -> None:
+        """Rebuild in-memory dicts from AgentToken / Mandate / Hold rows after a dyno restart."""
+        from datetime import timezone as dt_timezone
+        from payments.models import AgentToken, Hold, Mandate
+
+        def iso(dt):
+            return dt.astimezone(dt_timezone.utc).isoformat().replace("+00:00", "Z")
+
+        status_map = {
+            Hold.Status.AUTHORIZED: "AUTHORIZED", Hold.Status.CAPTURED: "CAPTURED",
+            Hold.Status.RELEASED: "RELEASED", Hold.Status.EXPIRED: "EXPIRED", Hold.Status.DECLINED: "DECLINED",
+        }
+        try:
+            for row in AgentToken.objects.all():
+                self.tokens[row.gateway_token_id] = {
+                    "member_id": str(row.member_id), "last4": row.card_last4, "scope": row.scope,
+                    "status": row.status,
+                }
+            for row in Mandate.objects.select_related("agent_token"):
+                self.mandates[row.gateway_mandate_id] = {
+                    "token": row.agent_token.gateway_token_id, "cap": row.cap_cents,
+                    "merchant_id": row.merchant_slug, "listing_ref": row.listing_ref,
+                    "expires_at": iso(row.expires_at), "status": row.status,
+                    "member_id": str(row.member_id),
+                }
+            for row in Hold.objects.select_related("mandate"):
+                self.holds[row.gateway_hold_id] = {
+                    "mandate": row.mandate.gateway_mandate_id, "amount": row.amount_cents,
+                    "status": status_map.get(row.status, str(row.status).upper()),
+                }
+                if row.gateway_capture_id:
+                    self.captures[row.gateway_capture_id] = {
+                        "hold": row.gateway_hold_id, "amount": row.amount_cents, "refunded": 0,
+                    }
+        except Exception:
+            return
 
     # ---------- helpers ----------
     def _id(self, prefix: str) -> str:
