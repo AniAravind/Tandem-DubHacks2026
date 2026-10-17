@@ -9,3 +9,4 @@ frontend/dist/
 node_modules/
 .DS_Store
 db.sqlite3
+.Rhistory

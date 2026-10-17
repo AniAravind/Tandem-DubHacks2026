@@ -2,7 +2,7 @@
 
 ## AGENT START HERE
 
-You are the coding agent working for **Aryan** on **Tandem**. Aryan owns the **Grok 4.1 Fast tool-calling loop** (xAI API, OpenAI-compatible), the system prompt and all agent copy, LLM-side prompt-injection defenses, the **chat adapter** layer (React web chat now, Photon/iMessage later), the **React web chat UI**, and every **chat card component**. Grok only reads chat, chooses one of 6 allowlisted tools, and phrases results. It never computes money, never picks winners, and never calls the gateway.
+You are the coding agent working for **Aryan** on **Tandem**. Aryan owns the **Grok 4.7 tool-calling loop** (xAI API, OpenAI-compatible), the system prompt and all agent copy, LLM-side prompt-injection defenses, the **chat adapter** layer (React web chat now, Photon/iMessage later), the **React web chat UI**, and every **chat card component**. Grok only reads chat, chooses one of 6 allowlisted tools, and phrases results. It never computes money, never picks winners, and never calls the gateway.
 
 **Read order:**
 1. This file, top to bottom.
@@ -36,7 +36,7 @@ Also check: `agent/tools.json` parses (`python -c "import json; print(len(json.l
 
 ### LLM configuration
 - Endpoint `XAI_BASE_URL=https://api.x.ai/v1`; key `XAI_API_KEY` (env only; the human sets it on Heroku with `heroku config:set XAI_API_KEY=... -a <app>`).
-- Model **Grok 4.1 Fast**; id from `XAI_MODEL` (default `grok-4-1-fast`). The human must confirm the exact id string in the xAI console; never hardcode it outside `agent/llm.py`.
+- Model **Grok 4.7**; id from `XAI_MODEL` (default `grok-4.7`). The human must confirm the exact id string in the xAI console; never hardcode it outside `agent/llm.py`.
 - `temperature=0.2`, `tool_choice="auto"`, at most one money-adjacent tool call at a time, timeout from `XAI_TIMEOUT_S` (8), one retry.
 
 **Then do milestones M1 to M8 in order.** When something you depend on is not on `main` yet, use the named fake and continue; never wait idle.
@@ -149,7 +149,7 @@ from openai import OpenAI
 
 client = OpenAI(api_key=os.environ["XAI_API_KEY"], base_url=os.getenv("XAI_BASE_URL", "https://api.x.ai/v1"),
                 timeout=float(os.getenv("XAI_TIMEOUT_S", "8")))
-MODEL = os.getenv("XAI_MODEL", "grok-4-1-fast")   # VERIFY exact id in the xAI console
+MODEL = os.getenv("XAI_MODEL", "grok-4.7")   # VERIFY exact id in the xAI console
 
 
 def chat(messages: list[dict], tools: list[dict]):
@@ -739,7 +739,7 @@ Tandem-DubHacks2026/
 ## 4. Milestones
 
 ### Before the scaffold lands (human prep, scratch folder only, no repo)
-While Eshaan builds M0, Aryan works in `~/tandem-scratch/aryan/`: (1) read §3 contracts and send any `CONTRACT CHANGE` requests to Eshaan before he locks them; (2) confirm the exact Grok 4.1 Fast model id in the xAI console; (3) draft the system prompt (§6) and a tool-calling loop script tested directly against the xAI API using a copy of `tools.json` and the fake engine in §5; (4) list 15 injection prompts. Once Rishab adds Aryan to the Heroku app, set `XAI_API_KEY` there. Nothing from scratch is committed directly; M1 ports it.
+While Eshaan builds M0, Aryan works in `~/tandem-scratch/aryan/`: (1) read §3 contracts and send any `CONTRACT CHANGE` requests to Eshaan before he locks them; (2) confirm the exact Grok 4.7 model id in the xAI console; (3) draft the system prompt (§6) and a tool-calling loop script tested directly against the xAI API using a copy of `tools.json` and the fake engine in §5; (4) list 15 injection prompts. Once Rishab adds Aryan to the Heroku app, set `XAI_API_KEY` there. Nothing from scratch is committed directly; M1 ports it.
 
 ### M1: Port scratch work and smoke test
 **Files:** `agent/prompts/system.md` (from §6), `agent/orchestrator.py` skeleton, `scripts/xai_smoke.py` (unchanged contract).

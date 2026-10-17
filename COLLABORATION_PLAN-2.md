@@ -14,7 +14,7 @@
 2. **While M0 runs**, the others work outside the repo:
    - Everyone first reads the contracts section of their own person file and sends any `CONTRACT CHANGE` request to Eshaan **before he locks the contracts** (his step M0.1).
    - **Ani:** consent page UI and `ConsentService` logic in `~/tandem-scratch/ani/` against copies of the fixtures and the simulated gateway.
-   - **Aryan:** confirms the exact Grok 4.1 Fast model id, drafts the system prompt, and tests a tool-calling loop directly against the xAI API in `~/tandem-scratch/aryan/`; sets `XAI_API_KEY` on Heroku once added as a collaborator.
+   - **Aryan:** confirms the exact Grok 4.7 model id, drafts the system prompt, and tests a tool-calling loop directly against the xAI API in `~/tandem-scratch/aryan/`; sets `XAI_API_KEY` on Heroku once added as a collaborator.
    - **Rishab:** **creates the Heroku app, buildpacks, Postgres and Redis add-ons, and config vars, and adds Eshaan and Aryan as collaborators** (Eshaan does the first deploy; Rishab owns every deploy after that); sketches the dashboard and starts the Devpost draft in `~/tandem-scratch/rishab/`; starts collecting real user quotes with consent.
 3. **When `PHASE 0 DONE` is posted:** everyone pulls `main`, runs the scaffold check in their file's AGENT START HERE block, branches off `main`, and hands their person file + `TANDEM_SPEC.md` to their coding agent. Each agent's M1 ports the scratch work into owned directories. From then on, all four run concurrently.
 
