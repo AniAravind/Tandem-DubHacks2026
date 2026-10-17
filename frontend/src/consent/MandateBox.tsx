@@ -1,5 +1,6 @@
+import { Clock, Shield, Store } from "./Icons";
 import LowerLimit from "./LowerLimit";
-import { formatUsd } from "./money";
+import { deadlineLabel, formatUsd } from "./money";
 import type { ConsentPayload } from "./api";
 
 export default function MandateBox({
@@ -7,15 +8,23 @@ export default function MandateBox({
 }: {
   data: ConsentPayload; cap: number; onCap: (cents: number) => void;
 }) {
-  const deadline = new Date(data.deadline_at);
-  const label = deadline.toLocaleString("en-US", {
-    weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles",
-  });
   return (
-    <section className="consent-card">
-      <p className="kicker">Your spending limit (mandate)</p>
-      <p><strong>Max {formatUsd(cap)}</strong> · {data.purchase.merchant_name} only</p>
-      <p className="muted">Expires {label} (deadline)</p>
+    <section className="card" aria-labelledby="mandate-label">
+      <p className="kicker" id="mandate-label">Your spending limit (mandate)</p>
+      <div className="rows">
+        <div className="row">
+          <span className="row-icon"><Shield /></span>
+          <div><p className="row-label">Maximum</p><p className="row-value money">{formatUsd(cap)}</p></div>
+        </div>
+        <div className="row">
+          <span className="row-icon"><Store /></span>
+          <div><p className="row-label">Merchant lock</p><p className="row-value">{data.purchase.merchant_name} only</p></div>
+        </div>
+        <div className="row">
+          <span className="row-icon"><Clock /></span>
+          <div><p className="row-label">Expires at the deadline</p><p className="row-value">{deadlineLabel(data.deadline_at)}</p></div>
+        </div>
+      </div>
       <LowerLimit shareCents={data.share_cents} defaultCap={data.default_cap_cents} cap={cap} onChange={onCap} />
     </section>
   );

@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 const REASONS = [
   { id: "too_expensive", label: "Too expensive" },
   { id: "dates", label: "Dates don't work" },
@@ -6,19 +8,37 @@ const REASONS = [
 ] as const;
 
 export default function DeclineSheet({
-  onPick, onClose,
+  onConfirm, onClose,
 }: {
-  onPick: (reason: string) => void; onClose: () => void;
+  onConfirm: (reason: string) => void; onClose: () => void;
 }) {
+  const [reason, setReason] = useState("prefer_not_to_say");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="decline-title">
-      <div className="sheet-card">
-        <h2 id="decline-title">Not for me</h2>
-        <p className="muted">This reason stays private. The group only sees that a spot opened up.</p>
-        {REASONS.map((r) => (
-          <button key={r.id} className="btn reason" type="button" onClick={() => onPick(r.id)}>{r.label}</button>
-        ))}
-        <button className="btn" type="button" onClick={onClose}>Keep this hold option</button>
+    <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="decline-title" onClick={onClose}>
+      <div className="sheet-card" onClick={(e) => e.stopPropagation()}>
+        <div className="grabber" />
+        <h2 className="sheet-title" id="decline-title">Not for you this time?</h2>
+        <p className="muted small">Optional and private. The group only sees that a spot opened up.</p>
+        <fieldset className="reasons" style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend className="kicker" style={{ marginBottom: 6 }}>Reason (private)</legend>
+          {REASONS.map((r) => (
+            <label key={r.id} className="reason">
+              <input type="radio" name="reason" value={r.id} checked={reason === r.id} onChange={() => setReason(r.id)} />
+              {r.label}
+            </label>
+          ))}
+        </fieldset>
+        <div className="actions-row" style={{ marginTop: 6 }}>
+          <button className="btn" type="button" onClick={onClose}>Go back</button>
+          <button className="btn btn-primary" type="button" onClick={() => onConfirm(reason)}>I'm out</button>
+        </div>
       </div>
     </div>
   );
