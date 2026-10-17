@@ -1,3 +1,16 @@
 from django.db import models
+from core.models import TimeStamped, Group, Member
 
-# Create your models here.
+
+class ChatMessage(TimeStamped):
+    class Direction(models.TextChoices):
+        INBOUND = "in"; OUTBOUND = "out"
+
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="messages")
+    member = models.ForeignKey(Member, null=True, blank=True, on_delete=models.SET_NULL)  # null = Tandem
+    direction = models.CharField(max_length=3, choices=Direction.choices)
+    text_redacted = models.TextField()                      # phone/email/PAN patterns stripped
+    card = models.JSONField(null=True, blank=True)          # AgentMessage.card (6.6)
+    quick_replies = models.JSONField(default=list, blank=True)
+    channel = models.CharField(max_length=16, default="web")
+    seq = models.BigIntegerField(db_index=True)             # per-group ordering for polling
