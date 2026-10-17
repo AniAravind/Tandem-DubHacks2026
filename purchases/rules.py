@@ -17,19 +17,29 @@ Rules used here (see the brief, section "Rules"):
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
-from datetime import timezone as dt_timezone
+import uuid
+from datetime import date, timedelta, timezone as dt_timezone
+from urllib.parse import urlparse
 
+from django.conf import settings
+from django.core import signing
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from chat.adapters.base import AgentMessage, Card
-from core.events import event_context
-from core.models import Member
+from core.events import EventType, event_context, log_event
+from core.models import EventLog, Member
 from payments.gateway import GatewayError, Money, get_gateway
+from merchant import signing as agent_signing
+from merchant.models import SignedRequest
 from payments.models import AgentToken, Consent, Hold, Mandate
-from purchases.models import Purchase, Share
+from purchases import consensus, ledger, serializers as ser, toolschema
+from purchases.merchant_client import get_merchant_client, parse_signature_input
+from purchases.models import Booking, Option, Purchase, Refund, Share, Vote
 from purchases.states import IllegalTransition, transition_purchase, transition_share
 
 log = logging.getLogger(__name__)
@@ -84,35 +94,210 @@ def _hold_dict(hold: Hold) -> dict:
 # --------------------------------------------------------------------------------------
 # Chat updates ("3 of 6 held")
 # --------------------------------------------------------------------------------------
-def _post_group_update(purchase_id) -> None:
-    """Tell the group chat how many shares are held. Never lets a chat problem break a payment step."""
+def _post(group_id, message: AgentMessage) -> None:
+    """Put a message in the group chat. Never lets a chat problem break a payment step."""
     try:
-        purchase = Purchase.objects.select_related("option").get(pk=purchase_id)
-        shares = list(_active_shares(purchase))
-        held = [s for s in shares if s.status == S.HELD]
-        data = {
-            "purchase_id": str(purchase.id), "title": purchase.option.title, "total_cents": purchase.total_cents,
-            "held_cents": sum(s.amount_cents for s in held), "deadline_at": purchase.deadline_at.isoformat(),
-            "members": [{"id": str(s.member_id), "initials": s.member.display_name[:1].upper(),
-                         "display_name": s.member.display_name, "status": s.status} for s in shares],
-            "simulated": True}
-        message = AgentMessage(text=f"{len(held)} of {len(shares)} held (simulated)", card=Card("FundingCard", data))
         try:
             from chat.services import post_card          # Aryan's helper, if it exists yet
-            post_card(str(purchase.group_id), message)
+            post_card(str(group_id), message)
         except ImportError:
             from chat.adapters.web import WebChatAdapter
-            WebChatAdapter().send(str(purchase.group_id), message)
+            WebChatAdapter().send(str(group_id), message)
     except Exception:                                     # noqa: BLE001  (chat must never block money logic)
-        log.exception("could not post group update for purchase %s", purchase_id)
+        log.exception("could not post to group %s", group_id)
+
+
+def _post_group_update(purchase_id) -> None:
+    purchase = Purchase.objects.select_related("option").get(pk=purchase_id)
+    shares = list(_active_shares(purchase))
+    held = [s for s in shares if s.status == S.HELD]
+    data = {
+        "purchase_id": str(purchase.id), "title": purchase.option.title, "total_cents": purchase.total_cents,
+        "held_cents": sum(s.amount_cents for s in held), "deadline_at": purchase.deadline_at.isoformat(),
+        "members": [{"id": str(s.member_id), "initials": s.member.display_name[:1].upper(),
+                     "display_name": s.member.display_name, "status": s.status} for s in shares],
+        "simulated": True}
+    _post(purchase.group_id, AgentMessage(text=f"{len(held)} of {len(shares)} held (simulated)", card=Card("FundingCard", data)))
 
 
 # --------------------------------------------------------------------------------------
-# Checkout: filled in by milestone M4. For now it only exists so check_funded has something to call.
+# Checkout: book with the merchant (signed request), then capture every hold. Milestone M4.
 # --------------------------------------------------------------------------------------
-def checkout(purchase_id) -> None:
-    raise NotImplementedError("checkout is built in milestone M4")
+def _dates_label(check_in, check_out) -> str:
+    """'Nov 14 to 16' (or 'Nov 30 to Dec 2'); empty when the trip has no dates."""
+    try:
+        a, b = date.fromisoformat(str(check_in)), date.fromisoformat(str(check_out))
+    except ValueError:
+        return ""
+    end = f"{b.day}" if (a.year, a.month) == (b.year, b.month) else f"{b:%b} {b.day}"
+    return f"{a:%b} {a.day} to {end}"
 
+
+def _maybe_tamper(body: bytes) -> bytes:
+    """Demo switch (milestone M8 sets it): change the price AFTER signing, so the merchant must reject the request."""
+    if not cache.get("demo:tamper_next"):
+        return body
+    cache.delete("demo:tamper_next")
+    data = json.loads(body)
+    data["amount_cents"] = max(1, data["amount_cents"] - 10_000)
+    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _signed_send(client, purchase: Purchase, slug: str, action: str, body: dict, purpose: str, extra_headers=None):
+    """Sign a request, send it, and keep an audit row. Retries ONCE, and only if the merchant has a server error."""
+    tag = "agent-browser-auth" if action == "quotes" else "agent-payer-auth"
+    base = urlparse(settings.MERCHANT_BASE_URL)
+    authority, path = base.netloc, f"{base.path.rstrip('/')}/{slug}/{action}"
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    for attempt in (1, 2):
+        headers = {**agent_signing.sign_request(authority, path, raw, tag), **(extra_headers or {})}
+        info = parse_signature_input(headers["Signature-Input"])
+        audit = SignedRequest.objects.create(
+            purpose=purpose, method="POST", authority=authority, path=path, keyid=info["keyid"], nonce=info["nonce"],
+            created=info["created"], expires=info["expires"], tag=tag, content_digest=headers["Content-Digest"],
+            signature_b64=headers["Signature"].split(":")[1])
+        log_event(EventType.SIGNER_REQUEST_SIGNED, actor="signer", group_id=purchase.group_id, purchase_id=purchase.id,
+                  payload={"purpose": purpose, "path": path, "keyid": info["keyid"], "tag": tag})
+        status, data = client.send(slug, action, headers, _maybe_tamper(raw) if purpose == "checkout" else raw)
+        audit.response_code, audit.verified = status, status in (200, 201)
+        if status >= 400:
+            audit.reject_reason = (data.get("error") or {}).get("code", "")[:32]
+        audit.save(update_fields=["response_code", "verified", "reject_reason", "updated_at"])
+        if status < 500 or attempt == 2:
+            return status, data, audit
+
+
+def _reject(purchase: Purchase, status: int, data: dict, why: str = "") -> dict:
+    reason = (data.get("error") or {}).get("code") or why or "merchant_error"
+    log_event(EventType.MERCHANT_REJECTED, actor="merchant", group_id=purchase.group_id, purchase_id=purchase.id,
+              payload={"reason": reason, "status": status})
+    return {"status": "rejected", "reason": reason}                  # nothing was captured; holds stay in place
+
+
+def checkout(purchase_id) -> dict:
+    """
+    Book the purchase. Order matters: check every rule, ask the merchant for a fresh quote, send the SIGNED checkout,
+    and only when the merchant says 201 do we capture (charge) the holds. Any rejection means no capture.
+    """
+    gateway, client = get_gateway(), get_merchant_client()
+    with transaction.atomic():
+        purchase = Purchase.objects.select_for_update().select_related("option").get(pk=purchase_id)
+        if purchase.state != P.FUNDED:
+            return {"status": "already_booked" if purchase.state in (P.BOOKED, P.COMPLETED) else "not_funded"}
+        shares = list(_active_shares(purchase))
+        # R8: every active share is held and they add up to the total.
+        if not (shares and all(sh.status == S.HELD for sh in shares)
+                and sum(sh.amount_cents for sh in shares) == purchase.total_cents):
+            return {"status": "not_funded"}
+        # R7: nothing after the deadline or after a mandate has expired.
+        mandates = {sh.id: sh.mandates.filter(status=Mandate.Status.ACTIVE).order_by("-created_at").first() for sh in shares}
+        if timezone.now() >= purchase.deadline_at or any(m is None or m.expires_at <= timezone.now() for m in mandates.values()):
+            return _reject(purchase, 0, {}, "expired")
+        # R6: merchant and listing must equal what every member agreed to.
+        option = purchase.option
+        if any(m.merchant_slug != option.merchant_slug or m.listing_ref != option.listing_ref for m in mandates.values()):
+            return _reject(purchase, 0, {}, "merchant_lock")
+
+        with event_context(purchase.group_id, purchase.id):
+            # R9: ask for a fresh quote; the price must still equal what the group agreed to.
+            dates = {"check_in": option.meta.get("check_in"), "check_out": option.meta.get("check_out")}
+            status, quote, _ = _signed_send(client, purchase, option.merchant_slug, "quotes",
+                                            {"listing_ref": option.listing_ref, "guests": len(shares), **dates}, "browse")
+            if status != 200:
+                return _reject(purchase, status, quote, "quote_failed")
+            if quote["amount_cents"] != purchase.total_cents:
+                return _price_changed(purchase, len(shares), quote["amount_cents"])
+
+            body = {"quote_id": quote["quote_id"], "listing_ref": option.listing_ref, "check_in": quote.get("check_in"),
+                    "check_out": quote.get("check_out"), "guests": len(shares), "amount_cents": purchase.total_cents,
+                    "currency": purchase.currency,
+                    "payment": {"type": "group_mandates", "mandate_ids": [m.gateway_mandate_id for m in mandates.values()],
+                                "simulated": True},
+                    "agent": {"name": "Tandem", "purchase_id": str(purchase.id)}}
+            key = hashlib.sha256(f"{purchase.id}:checkout:{purchase.version}".encode()).hexdigest()
+            status, booked, audit = _signed_send(client, purchase, option.merchant_slug, "agent/checkout", body, "checkout",
+                                                 {"Idempotency-Key": key})
+            if status != 201:
+                return _reject(purchase, status, booked)                         # 401 / 409 / 5xx: no capture
+            log_event(EventType.MERCHANT_ACCEPTED, actor="merchant", group_id=purchase.group_id, purchase_id=purchase.id,
+                      payload={"booking_ref": booked["booking_ref"]})
+
+            booking = Booking.objects.create(
+                purchase=purchase, merchant_slug=option.merchant_slug, merchant_booking_ref=booked["booking_ref"],
+                amount_cents=purchase.total_cents, signed_request=audit, cancellation_policy={"text": option.meta.get("cancellation", "")})
+            transition_purchase(purchase.id, P.BOOKED, actor="rules", booking_ref=booking.merchant_booking_ref)
+            log_event(EventType.BOOKING_CONFIRMED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
+                      payload={"booking_ref": booking.merchant_booking_ref})
+            try:
+                for sh in shares:
+                    _capture_share(gateway, sh, purchase)
+            except GatewayError as e:                                           # R13: undo everything
+                return _compensate(gateway, client, purchase, booking, shares, reason=e.code)
+
+        _post(purchase.group_id, AgentMessage(
+            text=f"Booked! Reference {booking.merchant_booking_ref} (simulated payments).",
+            card=Card("BookingConfirmed", {
+                "title": option.title, "dates": _dates_label(quote.get("check_in"), quote.get("check_out")),
+                "booking_ref": booking.merchant_booking_ref, "per_person_cents": consensus.ceil_div(purchase.total_cents, len(shares)),
+                "signature_verified": True, "simulated": True,
+                "dashboard_url": f"{settings.PUBLIC_BASE_URL.rstrip('/')}/g/{purchase.group_id}"})))
+        return {"status": "booked", "booking_ref": booking.merchant_booking_ref, "captured": len(shares)}
+
+
+def _price_changed(purchase: Purchase, people: int, new_total: int) -> dict:
+    """The merchant's price moved. Keep every hold, go back to the group, and let them vote."""
+    transition_purchase(purchase.id, P.COLLECTING, actor="rules", reason="price_change", quoted_cents=new_total)
+    active = len(consensus.active_members(purchase.group_id))
+    vote = Vote.objects.create(
+        group_id=purchase.group_id, purchase=purchase, purpose=Vote.Purpose.PRICE_CHANGE, quorum=consensus.quorum_for(active),
+        closes_at=timezone.now() + timedelta(minutes=30),
+        choices=[{"key": "accept", "label": "Pay the new price"}, {"key": "cancel", "label": "Cancel the purchase"}])
+    log_event(EventType.VOTE_OPENED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
+              payload={"vote_id": str(vote.id), "purpose": "price_change"})
+    _post(purchase.group_id, AgentMessage(
+        text=f"The price changed from {ser.money(purchase.total_cents)} to {ser.money(new_total)}. Nobody was charged.",
+        card=Card("VoteCard", {"vote_id": str(vote.id), "closes_at": ser.iso(vote.closes_at), "quorum": vote.quorum, "voted": 0,
+                               "choices": [{"key": "accept", "label": "Pay the new price", "count": 0,
+                                            "per_person_cents": consensus.ceil_div(new_total, people)},
+                                           {"key": "cancel", "label": "Cancel the purchase", "count": 0, "per_person_cents": 0}]})))
+    return {"status": "price_changed", "quoted_cents": new_total, "expected_cents": purchase.total_cents}
+
+
+def _capture_share(gateway, share: Share, purchase: Purchase) -> None:
+    """Charge one member's hold. The idempotency key means a repeat of this call can never charge twice."""
+    hold = share.holds.filter(status=Hold.Status.AUTHORIZED).order_by("-created_at").first()
+    resp = gateway.capture(hold.gateway_hold_id, Money(hold.amount_cents, purchase.currency),
+                           _idem_key(share.id, "capture", purchase.version))
+    hold.status, hold.gateway_capture_id = Hold.Status.CAPTURED, resp["capture_id"]
+    hold.save(update_fields=["status", "gateway_capture_id", "updated_at"])
+    share.mandates.filter(status=Mandate.Status.ACTIVE).update(status=Mandate.Status.CONSUMED)
+    transition_share(share.id, S.CAPTURED, actor="rules", capture_id=resp["capture_id"])
+
+
+def _compensate(gateway, client, purchase: Purchase, booking: Booking, shares: list, reason: str) -> dict:
+    """R13: a capture failed after the merchant booked. Cancel the booking, refund what was charged, release the rest."""
+    status, data, _ = _signed_send(client, purchase, booking.merchant_slug, "agent/cancel",
+                                   {"booking_ref": booking.merchant_booking_ref}, "cancel")
+    for share in Share.objects.filter(pk__in=[sh.pk for sh in shares]):
+        if share.status == S.CAPTURED:
+            hold = share.holds.filter(status=Hold.Status.CAPTURED).order_by("-created_at").first()
+            resp = gateway.refund(hold.gateway_capture_id, Money(hold.amount_cents, purchase.currency),
+                                  _idem_key(share.id, "refund", purchase.version))
+            Refund.objects.create(booking=booking, share=share, amount_cents=hold.amount_cents,
+                                  gateway_refund_id=resp["refund_id"])
+            transition_share(share.id, S.REFUNDED, actor="rules", reason=reason)
+        elif share.status == S.HELD:
+            _release_share_money(gateway, share, purchase, "booking_cancelled")
+            transition_share(share.id, S.RELEASED, actor="rules", reason=reason)
+    booking.status = Booking.Status.CANCELLED
+    booking.save(update_fields=["status", "updated_at"])
+    log_event(EventType.BOOKING_CANCELLED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
+              payload={"booking_ref": booking.merchant_booking_ref, "reason": reason, "merchant_cancel_status": status})
+    transition_purchase(purchase.id, P.CANCELLED, actor="rules", reason=reason)
+    transition_purchase(purchase.id, P.REFUNDED, actor="rules", reason=reason)
+    _post(purchase.group_id, AgentMessage(text="The booking could not be completed, so it was cancelled and "
+                                               "everyone was refunded (simulated)."))
+    return {"status": "compensated", "reason": reason}
 
 # --------------------------------------------------------------------------------------
 # check_funded
@@ -129,13 +314,16 @@ def check_funded(purchase_id) -> dict:
         if not (all_held and total_ok):
             return {"funded": False, "reason": "not every share is held yet"}
         transition_purchase(purchase.id, P.FUNDED, actor="rules", reason="all_shares_held")
+        # Book only after this database transaction has committed, so a booking problem can never undo "funded".
+        transaction.on_commit(lambda: _run_checkout(purchase.id))
+    return {"funded": True}
 
-    # Funded is saved. Now try to book. Checkout does not exist until M4, so that is caught and logged.
+
+def _run_checkout(purchase_id) -> None:
     try:
         checkout(purchase_id)
-    except NotImplementedError:
-        log.info("purchase %s funded; checkout not built yet (M4)", purchase_id)
-    return {"funded": True}
+    except Exception:                                     # noqa: BLE001  (logged; the purchase stays funded)
+        log.exception("checkout failed for purchase %s", purchase_id)
 
 
 # --------------------------------------------------------------------------------------
@@ -315,3 +503,230 @@ def member_withdraw(share_id, reason: str) -> dict:
     _post_group_update(purchase_id)
     share.refresh_from_db()
     return {"share_status": share.status, "group_counts": _group_counts(purchase)}
+
+
+# ======================================================================================================
+# RulesEngine: the single door the AI agent goes through (milestone M3)
+# ======================================================================================================
+MAX_CALLS_PER_MINUTE = 20             # R11: agent tool calls per group
+MAX_OPEN_PURCHASES_PER_MEMBER = 2     # R12
+MAX_PURCHASE_CENTS = 1_000_000        # R12: $10,000 per purchase
+OPEN_PURCHASE_STATES = (P.COLLECTING, P.FUNDED)
+
+
+def consent_token(share: Share) -> str:
+    """Private link token for one share. Uses Ani's version once it exists, otherwise a signed stand-in."""
+    try:
+        from payments.services import make_consent_token          # Ani's real one
+        return make_consent_token(share)
+    except ImportError:
+        payload = {"share_id": str(share.id), "member_id": str(share.member_id), "purchase_version": share.purchase_version}
+        return signing.TimestampSigner(salt="consent").sign(json.dumps(payload, sort_keys=True))
+
+
+def consent_link(share: Share) -> str:
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/c/{consent_token(share)}"
+
+
+def _send_consent_links(shares: list) -> int:
+    """
+    Hand each member their private link. Consent links are secrets (whoever holds one can act as that member),
+    so they are NEVER posted in the group chat or returned to the AI. Delivery needs a private-message sender
+    from the chat side (chat.services.send_private, Aryan). Until that exists, nothing is sent and we return 0.
+    """
+    try:
+        from chat.services import send_private
+    except ImportError:
+        log.warning("chat.services.send_private is missing; %d consent links were created but not delivered", len(shares))
+        return 0
+    for share in shares:
+        send_private(str(share.purchase.group_id), str(share.member_id),
+                     AgentMessage(text="Your private link to approve your share (simulated payments).",
+                                  link=consent_link(share), private_to_member_id=str(share.member_id)))
+    return len(shares)
+
+
+class RulesEngine:
+    """
+    execute(tool, args, actor) -> {"ok": True, "data": {...}} or {"ok": False, "error": {"code", "message"}}
+
+    `actor` is "member:<uuid>", the person whose chat message led to this call. Every call is checked against
+    the argument schema in agent/tools.json, rate limited, and logged (tool name and argument NAMES only).
+    """
+
+    def __init__(self):
+        self.schemas = toolschema.load_tool_schemas()
+        self.tools = {
+            "search_options": self._search_options, "start_vote": self._start_vote,
+            "create_purchase": self._create_purchase, "check_status": self._check_status,
+            "propose_fallback": self._propose_fallback, "add_expense": self._add_expense}
+
+    def execute(self, tool: str, args: dict, actor: str) -> dict:
+        group_id = None
+        try:
+            if tool not in self.tools:
+                raise RuleError("unknown_tool", f"There is no tool called {tool!r}.")
+            problems = toolschema.validate(self.schemas[tool], args)
+            if problems:
+                raise RuleError("invalid_arguments", "; ".join(problems))
+            member = self._actor(actor)                                   # R1
+            group_id = member.group_id
+            self._rate_limit(group_id)                                    # R11
+            log_event(EventType.AGENT_TOOL_CALLED, actor=actor, group_id=group_id,
+                      payload={"tool": tool, "arg_names": sorted(args)})  # never the values (they can include budgets)
+            with transaction.atomic():
+                return {"ok": True, "data": self.tools[tool](member, args)}
+        except RuleError as e:
+            log_event(EventType.AGENT_TOOL_REJECTED, actor=actor, group_id=group_id,
+                      payload={"tool": tool, "code": e.code})
+            return {"ok": False, "error": {"code": e.code, "message": e.message}}
+
+    # ------------------------------------------------------------------ checks
+    @staticmethod
+    def _actor(actor: str) -> Member:
+        try:
+            prefix, raw = actor.split(":", 1)
+            member = Member.objects.get(pk=uuid.UUID(raw))
+        except (ValueError, Member.DoesNotExist):
+            raise RuleError("unauthorized", "The caller is not a known member.")
+        if prefix != "member" or member.status != Member.Status.ACTIVE:
+            raise RuleError("unauthorized", "Only active members of the group can use Tandem.")
+        return member
+
+    @staticmethod
+    def _rate_limit(group_id) -> None:
+        since = timezone.now() - timedelta(minutes=1)
+        recent = EventLog.objects.filter(group_id=group_id, type=EventType.AGENT_TOOL_CALLED, created_at__gte=since).count()
+        if recent >= MAX_CALLS_PER_MINUTE:
+            raise RuleError("rate_limited", "Too many requests this minute. Try again shortly.")
+
+    @staticmethod
+    def _own(model, pk, member: Member, what: str):
+        """Fetch a row by id, but only if it belongs to the caller's group (a bad id never leaks other groups)."""
+        try:
+            obj = model.objects.get(pk=uuid.UUID(str(pk)))
+        except (ValueError, model.DoesNotExist):
+            raise RuleError("not_found", f"No such {what}.")
+        if obj.group_id != member.group_id:
+            raise RuleError("not_found", f"No such {what}.")
+        return obj
+
+    # ------------------------------------------------------------------ the six tools
+    def _search_options(self, member: Member, args: dict) -> dict:
+        members = consensus.active_members(member.group_id)
+        if args["group_size"] != len(members):
+            raise RuleError("group_size_mismatch", f"The group has {len(members)} active members, not {args['group_size']}.")
+        budget_max = args.get("budget_per_person_max")
+        ranked = consensus.rank_options(
+            members, args["category"], args["group_size"], extra_must_haves=args.get("must_haves", []),
+            budget_per_person_max_cents=round(budget_max * 100) if budget_max is not None else None)
+        search_id = uuid.uuid4().hex
+        options = []
+        for rank, c in enumerate(ranked, start=1):
+            listing = c.listing
+            options.append(Option.objects.create(
+                group_id=member.group_id, merchant_slug=listing.merchant.slug, listing_ref=listing.ref,
+                category=args["category"], title=listing.title, total_cents=c.total_cents, capacity=listing.capacity,
+                features=listing.features, score=c.score, explanation_facts=c.facts,
+                meta={**listing.meta, "search_id": search_id, "rank": rank, "per_person_cents": c.per_person_cents,
+                      "group_size": args["group_size"], **self._trip_dates(args)}))
+        log_event(EventType.OPTIONS_RANKED, actor="rules", group_id=member.group_id,
+                  payload={"count": len(options), "top": options[0].title if options else None})
+        return {"options": [ser.option_json(o) for o in options]}
+
+    @staticmethod
+    def _trip_dates(args: dict) -> dict:
+        dates = args.get("dates") or {}
+        return {k: v for k, v in (("check_in", dates.get("start")), ("check_out", dates.get("end"))) if v}
+
+    def _start_vote(self, member: Member, args: dict) -> dict:
+        ids = args["option_ids"]
+        if len(set(ids)) != len(ids):
+            raise RuleError("invalid_arguments", "option_ids must be different from each other.")
+        options = [self._own(Option, oid, member, "option") for oid in ids]
+        active = len(consensus.active_members(member.group_id))
+        vote = Vote.objects.create(
+            group_id=member.group_id, purpose=Vote.Purpose.PICK_OPTION, quorum=consensus.quorum_for(active),
+            closes_at=timezone.now() + timedelta(minutes=args.get("closes_in_minutes", 30)),
+            choices=[{"key": str(i), "option_id": str(o.id), "label": o.title} for i, o in enumerate(options, start=1)])
+        log_event(EventType.VOTE_OPENED, actor=f"member:{member.id}", group_id=member.group_id,
+                  payload={"vote_id": str(vote.id), "choices": len(options)})
+        return {"vote_id": str(vote.id), "closes_at": ser.iso(vote.closes_at), "quorum": vote.quorum,
+                "choices": [{"key": c["key"], "label": c["label"]} for c in vote.choices]}
+
+    def _create_purchase(self, member: Member, args: dict) -> dict:
+        option = self._own(Option, args["option_id"], member, "option")
+        # R3: only the option that WON a closed vote can be bought.
+        won = False
+        for vote in Vote.objects.filter(group_id=member.group_id, purpose=Vote.Purpose.PICK_OPTION):
+            vote = consensus.close_if_decided(vote)
+            winner = next((c for c in vote.choices if c["key"] == vote.winner_key), None)
+            if vote.status == Vote.Status.CLOSED and winner and winner["option_id"] == str(option.id):
+                won = True
+        if not won:
+            raise RuleError("vote_required", "That option has not won a group vote yet.")
+        if Purchase.objects.filter(group_id=member.group_id, option=option, state__in=OPEN_PURCHASE_STATES).exists():
+            raise RuleError("purchase_exists", "A purchase for this option is already open.")
+
+        ids = list(dict.fromkeys(args["member_ids"]))
+        buyers = [self._own(Member, i, member, "member") for i in ids]
+        if len(buyers) < 2 or any(b.status != Member.Status.ACTIVE for b in buyers):
+            raise RuleError("invalid_arguments", "Choose at least two active members.")
+        if len(buyers) > option.capacity:
+            raise RuleError("over_capacity", f"This option holds {option.capacity} people, not {len(buyers)}.")
+        total = option.total_cents
+        if total > MAX_PURCHASE_CENTS or ceil_split(total, len(buyers)) > MAX_SHARE_CENTS:      # R12
+            raise RuleError("over_limit", "Above the demo limits ($2,000 per share, $10,000 per purchase).")
+        for b in buyers:
+            open_now = Share.objects.filter(member=b, superseded_by__isnull=True, purchase__state__in=OPEN_PURCHASE_STATES,
+                                            status__in=[S.INVITED, S.VIEWING, S.HELD, S.CARD_FAILED]).count()
+            if open_now >= MAX_OPEN_PURCHASES_PER_MEMBER:
+                raise RuleError("too_many_open_purchases", f"{b.display_name} is already in {open_now} open purchases.")
+
+        purchase = Purchase.objects.create(group_id=member.group_id, option=option, total_cents=total,
+                                           currency=option.currency, deadline_at=timezone.now() + timedelta(hours=args["deadline_hours"]))
+        # Equal shares. Any leftover cents go to the organizer, recorded as rounding_adj_cents.
+        base, leftover = divmod(total, len(buyers))
+        organizer_id = member.group.organizer_id
+        carrier = next((b for b in buyers if b.id == organizer_id), buyers[0])
+        shares = [Share.objects.create(purchase=purchase, member=b, amount_cents=base + (leftover if b == carrier else 0),
+                                       rounding_adj_cents=leftover if b == carrier else 0) for b in buyers]
+        log_event(EventType.PURCHASE_CREATED, actor=f"member:{member.id}", group_id=member.group_id, purchase_id=purchase.id,
+                  payload={"option": option.title, "shares": len(shares), "total_cents": total})
+        transition_purchase(purchase.id, P.VOTING, actor="rules", reason="vote_won")
+        transition_purchase(purchase.id, P.COLLECTING, actor="rules", reason="shares_created")
+        sent = _send_consent_links(shares)
+        return {"purchase_id": str(purchase.id), "deadline_at": ser.iso(purchase.deadline_at),
+                "shares_created": len(shares), "consent_links_sent": sent}
+
+    def _check_status(self, member: Member, args: dict) -> dict:
+        if "purchase_id" in args:
+            purchase = self._own(Purchase, args["purchase_id"], member, "purchase")
+        else:
+            purchase = Purchase.objects.filter(group_id=member.group_id).order_by("-created_at").first()
+            if purchase is None:
+                raise RuleError("not_found", "There is no purchase yet.")
+        full = ser.purchase_json(purchase)
+        # counts only: no member names, no individual statuses, nothing private
+        return {"purchase_id": full["id"], "state": full["state"], "total_cents": full["total_cents"],
+                "held_cents": full["held_cents"], "deadline_at": full["deadline_at"], **full["counts"]}
+
+    def _propose_fallback(self, member: Member, args: dict) -> dict:
+        raise RuleError("not_implemented", "Fallbacks are not built yet.")           # milestone M6
+
+    def _add_expense(self, member: Member, args: dict) -> dict:
+        """The agent talks in dollars; the ledger works in whole cents."""
+        split = args["split"]
+        custom = split.get("custom_amounts")
+        try:
+            result = ledger.add_expense(
+                member.group, args["payer_id"], round(args["amount"] * 100), args.get("description", ""), split["mode"],
+                split.get("member_ids"), {k: round(v * 100) for k, v in custom.items()} if custom else None,
+                actor=f"member:{member.id}")
+        except ledger.LedgerError as e:
+            raise RuleError(e.code, e.message)
+        return {k: result[k] for k in ("expense_id", "description", "amount_cents", "per_person_cents", "split_count")}
+
+
+def ceil_split(total: int, people: int) -> int:
+    return consensus.ceil_div(total, people)

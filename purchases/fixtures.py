@@ -61,6 +61,7 @@ FIXTURES = {
         "balances": [{"member_id": "a2...", "display_name": "Priya", "net_cents": 4800},
                      {"member_id": "a1...", "display_name": "Maya", "net_cents": -1200}],
         "net_total_cents": 0,
+        "settle_up": [{"from": "Maya", "to": "Priya", "amount_cents": 1200}],      # added in M5: who pays whom
     },
     "events": {"events": [
         {"seq": 101, "at": "2026-10-17T23:03:40.118Z", "actor": "gateway", "type": "gateway.hold_authorized", "simulated": True,

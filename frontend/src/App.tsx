@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
+import ConsentPage from "./consent/ConsentPage";
 import "./styles/tokens.css";
 import Chat from "./chat/ChatPage";
 
@@ -12,7 +13,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<main><h1>tandem</h1><Link to="/chat/demo">Open demo chat</Link><Sim /></main>} />
         <Route path="/chat/:groupId" element={<Chat />} />
-        <Route path="/c/:token" element={<Consent />} />
+        <Route path="/c/:token" element={<ConsentPage />} />
         <Route path="/g/:groupId" element={<Dashboard />} />
       </Routes>
     </BrowserRouter>

@@ -2,7 +2,7 @@
 Purchases API.
 
 M2 (real, reads the database): group, preferences, ballots, purchase, leave, ledger, events.
-Still Phase 0 stubs that return the example JSON from purchases/fixtures.py: options (M3), expenses (M5), demo (M8).
+Still a Phase 0 stub that returns the example JSON from purchases/fixtures.py: demo (M8).
 
 Who is calling? During the hackathon demo the caller sends the header  X-Tandem-Member: <member uuid>.
 That header is only trusted when DEMO_MODE=1. A member who is not an active member of the group gets a 403.
@@ -20,8 +20,7 @@ from rest_framework.response import Response
 
 from core.events import EventType, log_event
 from core.models import Group, Member
-from purchases import rules, serializers as ser
-from purchases.fixtures import FIXTURES
+from purchases import consensus, ledger as ledger_lib, rules, serializers as ser
 from purchases.models import Ballot, Purchase, Share, Vote
 
 MAX_BUDGET_CENTS = 1_000_000            # $10,000 sanity limit for a private budget
@@ -114,8 +113,11 @@ def my_preferences(request, gid):
 
 
 @api_view(["GET"])
+@api_errors
 def options(request, gid):
-    return Response(FIXTURES["options"])                       # real ranking arrives in M3
+    """Options from the group's latest search (ranking happens in the search_options tool)."""
+    current_member(request, gid)
+    return Response(ser.latest_options_json(get_object_or_404(Group, pk=gid)))
 
 
 # ------------------------------------------------------------------ voting
@@ -133,6 +135,7 @@ def cast_ballot(request, vid):
         Ballot.objects.update_or_create(vote=vote, member=member, defaults={"choice_key": choice})   # change allowed
         log_event(EventType.BALLOT_CAST, actor=f"member:{member.id}", group_id=vote.group_id,
                   payload={"vote_id": str(vote.id), "member_id": str(member.id)})
+        vote = consensus.close_if_decided(vote)               # closes right away once everybody has voted
     return Response(ser.vote_json(vote, member))
 
 
@@ -160,8 +163,27 @@ def leave_share(request, sid):
 
 # ------------------------------------------------------------------ ledger and events
 @api_view(["POST"])
+@api_errors
 def add_expense(request, gid):
-    return Response(FIXTURES["expense_created"], status=201)      # real logic arrives in M5
+    """Any active member can record an expense. Amounts here are whole CENTS (the agent tool uses dollars)."""
+    member = current_member(request, gid)
+    data = request.data if isinstance(request.data, dict) else {}
+    split = data.get("split") if isinstance(data.get("split"), dict) else {}
+    member_ids, custom = split.get("member_ids"), split.get("custom_amounts")
+    if member_ids is not None and not (isinstance(member_ids, list) and all(isinstance(m, str) for m in member_ids)):
+        raise ApiError("invalid_request", "split.member_ids must be a list of member ids.")
+    if custom is not None and not isinstance(custom, dict):
+        raise ApiError("invalid_request", "split.custom_amounts must map member ids to cents.")
+    if not isinstance(data.get("payer_id"), str) or not isinstance(data.get("description", ""), str):
+        raise ApiError("invalid_request", "payer_id and description must be text.")
+    try:
+        result = ledger_lib.add_expense(get_object_or_404(Group, pk=gid), data["payer_id"], data.get("amount_cents"),
+                                    data.get("description", ""), split.get("mode", "equal"), member_ids, custom,
+                                    actor=f"member:{member.id}")
+    except ledger_lib.LedgerError as e:
+        raise ApiError(e.code, e.message, 403 if e.code == "not_a_member" else 400)
+    return Response({"expense_id": result["expense_id"], "splits": result["splits"],
+                     "balances_net_cents": result["balances_net_cents"]}, status=201)
 
 
 @api_view(["GET"])
