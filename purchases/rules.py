@@ -25,6 +25,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from chat.adapters.base import AgentMessage, Card
+from core.events import event_context
 from core.models import Member
 from payments.gateway import GatewayError, Money, get_gateway
 from payments.models import AgentToken, Consent, Hold, Mandate
@@ -163,94 +164,99 @@ def _place_hold(share_id, consent_id, agent_token_id, cap_cents: int) -> dict:
         purchase = Purchase.objects.select_for_update().select_related("option").get(pk=purchase_id)
         share = Share.objects.select_for_update().select_related("member").get(pk=share_id)
         member = share.member
+        with event_context(purchase.group_id, purchase.id):      # so gateway events land under this group
+            return _place_hold_locked(gateway, purchase, share, member, consent_id, agent_token_id, cap_cents)
 
-        # Same request twice -> same answer, no second hold.
-        if share.status == S.HELD:
-            hold = share.holds.filter(status=Hold.Status.AUTHORIZED).order_by("-created_at").first()
-            mandate = hold.mandate if hold else None
-            return {"share_status": share.status, "hold": _hold_dict(hold) if hold else None,
-                    "mandate_id": mandate.gateway_mandate_id if mandate else None,
-                    "group_counts": _group_counts(purchase), "_purchase_id": purchase.id}
 
-        # R1: the member is active and belongs to this purchase's group.
-        if member.status != Member.Status.ACTIVE or member.group_id != purchase.group_id:
-            raise RuleError("not_a_member", "Only active members of this group can place a hold.")
-        # R2: legal states.
-        if purchase.state != P.COLLECTING:
-            raise RuleError("illegal_state", f"Purchase is {purchase.state}, not collecting.")
-        if share.status not in (S.VIEWING, S.CARD_FAILED):
-            raise RuleError("illegal_state", f"Share is {share.status}; it must be viewing or card_failed.")
-        if share.superseded_by_id:
-            raise RuleError("share_superseded", "This share was replaced by a newer one.")
-        # R11: max 3 card declines.
-        if share.card_attempts >= MAX_CARD_ATTEMPTS:
-            raise RuleError("too_many_declines", "This card was declined 3 times. Use a different card.")
-        # R7: before the deadline.
-        if timezone.now() >= purchase.deadline_at:
-            raise RuleError("deadline_passed", "The deadline for this purchase has passed.")
-        # R4: consent exists for exactly this share and amount.
-        consent = Consent.objects.filter(pk=consent_id, share=share, member=member).first()
-        if consent is None:
-            raise RuleError("consent_required", "No consent on file for this share.")
-        if consent.amount_cents != share.amount_cents:
-            raise RuleError("consent_mismatch", "The consent was for a different amount.")
-        # R5 and R12: share <= cap <= hard limit.
-        if cap_cents < share.amount_cents:
-            raise RuleError("cap_exceeded", "Your share is higher than the cap you approved.")
-        if cap_cents > MAX_SHARE_CENTS or share.amount_cents > MAX_SHARE_CENTS:
-            raise RuleError("over_limit", "Above the $2,000 per-share demo limit.")
-        # The agent token must belong to this member and still be usable.
-        token = AgentToken.objects.filter(pk=agent_token_id, member=member).first()
-        if token is None or token.status != "active" or token.expires_at <= timezone.now():
-            raise RuleError("token_inactive", "The payment token is missing, revoked, or expired.")
+def _place_hold_locked(gateway, purchase, share, member, consent_id, agent_token_id, cap_cents) -> dict:
+    """The body of place_hold. Runs inside the database transaction and holds the Purchase and Share locks."""
+    # Same request twice -> same answer, no second hold.
+    if share.status == S.HELD:
+        hold = share.holds.filter(status=Hold.Status.AUTHORIZED).order_by("-created_at").first()
+        mandate = hold.mandate if hold else None
+        return {"share_status": share.status, "hold": _hold_dict(hold) if hold else None,
+                "mandate_id": mandate.gateway_mandate_id if mandate else None,
+                "group_counts": _group_counts(purchase), "_purchase_id": purchase.id}
 
-        option = purchase.option
-        money_cap = Money(cap_cents, purchase.currency)
+    # R1: the member is active and belongs to this purchase's group.
+    if member.status != Member.Status.ACTIVE or member.group_id != purchase.group_id:
+        raise RuleError("not_a_member", "Only active members of this group can place a hold.")
+    # R2: legal states.
+    if purchase.state != P.COLLECTING:
+        raise RuleError("illegal_state", f"Purchase is {purchase.state}, not collecting.")
+    if share.status not in (S.VIEWING, S.CARD_FAILED):
+        raise RuleError("illegal_state", f"Share is {share.status}; it must be viewing or card_failed.")
+    if share.superseded_by_id:
+        raise RuleError("share_superseded", "This share was replaced by a newer one.")
+    # R11: max 3 card declines.
+    if share.card_attempts >= MAX_CARD_ATTEMPTS:
+        raise RuleError("too_many_declines", "This card was declined 3 times. Use a different card.")
+    # R7: before the deadline.
+    if timezone.now() >= purchase.deadline_at:
+        raise RuleError("deadline_passed", "The deadline for this purchase has passed.")
+    # R4: consent exists for exactly this share and amount.
+    consent = Consent.objects.filter(pk=consent_id, share=share, member=member).first()
+    if consent is None:
+        raise RuleError("consent_required", "No consent on file for this share.")
+    if consent.amount_cents != share.amount_cents:
+        raise RuleError("consent_mismatch", "The consent was for a different amount.")
+    # R5 and R12: share <= cap <= hard limit.
+    if cap_cents < share.amount_cents:
+        raise RuleError("cap_exceeded", "Your share is higher than the cap you approved.")
+    if cap_cents > MAX_SHARE_CENTS or share.amount_cents > MAX_SHARE_CENTS:
+        raise RuleError("over_limit", "Above the $2,000 per-share demo limit.")
+    # The agent token must belong to this member and still be usable.
+    token = AgentToken.objects.filter(pk=agent_token_id, member=member).first()
+    if token is None or token.status != "active" or token.expires_at <= timezone.now():
+        raise RuleError("token_inactive", "The payment token is missing, revoked, or expired.")
 
-        # Reuse this consent's mandate if a previous attempt already created one (retry after a decline).
-        mandate = Mandate.objects.filter(consent=consent, status=Mandate.Status.ACTIVE).first()
-        if mandate is None:
-            created = gateway.create_purchase_mandate(
-                token.gateway_token_id, money_cap, option.merchant_slug, option.listing_ref,
-                _iso_utc(purchase.deadline_at), str(consent.id),
-                _idem_key(share.id, "mandate", purchase.version))
-            mandate = Mandate.objects.create(
-                share=share, member=member, agent_token=token, consent=consent, merchant_slug=option.merchant_slug,
-                listing_ref=option.listing_ref, cap_cents=cap_cents, currency=purchase.currency,
-                expires_at=purchase.deadline_at, scope=MANDATE_SCOPE, status=Mandate.Status.ACTIVE,
-                gateway_mandate_id=created["mandate_id"])
+    option = purchase.option
+    money_cap = Money(cap_cents, purchase.currency)
 
-        # Ask the (simulated) bank for a hold. A retry after a decline gets a fresh key.
-        attempt = str(share.card_attempts) if share.card_attempts else ""
-        resp = gateway.authorize_hold(mandate.gateway_mandate_id, Money(share.amount_cents, purchase.currency),
-                                      _idem_key(share.id, "hold", purchase.version, attempt), member_id=str(member.id))
+    # Reuse this consent's mandate if a previous attempt already created one (retry after a decline).
+    mandate = Mandate.objects.filter(consent=consent, status=Mandate.Status.ACTIVE).first()
+    if mandate is None:
+        created = gateway.create_purchase_mandate(
+            token.gateway_token_id, money_cap, option.merchant_slug, option.listing_ref,
+            _iso_utc(purchase.deadline_at), str(consent.id),
+            _idem_key(share.id, "mandate", purchase.version))
+        mandate = Mandate.objects.create(
+            share=share, member=member, agent_token=token, consent=consent, merchant_slug=option.merchant_slug,
+            listing_ref=option.listing_ref, cap_cents=cap_cents, currency=purchase.currency,
+            expires_at=purchase.deadline_at, scope=MANDATE_SCOPE, status=Mandate.Status.ACTIVE,
+            gateway_mandate_id=created["mandate_id"])
 
-        if resp["status"] == "AUTHORIZED":
-            hold = Hold.objects.create(
-                share=share, mandate=mandate, gateway_hold_id=resp["hold_id"], amount_cents=share.amount_cents,
-                status=Hold.Status.AUTHORIZED, expires_at=parse_datetime(resp["expires_at"]))
-            if share.status == S.CARD_FAILED:
-                transition_share(share.id, S.VIEWING, actor="rules", reason="card_retry")
-            transition_share(share.id, S.HELD, actor="rules", hold_id=hold.gateway_hold_id)
-            check_funded(purchase.id)                       # may flip the whole purchase to funded
-            share.refresh_from_db()
-            return {"share_status": share.status, "hold": _hold_dict(hold),
-                    "mandate_id": mandate.gateway_mandate_id, "group_counts": _group_counts(purchase),
-                    "_purchase_id": purchase.id}
+    # Ask the (simulated) bank for a hold. A retry after a decline gets a fresh key.
+    attempt = str(share.card_attempts) if share.card_attempts else ""
+    resp = gateway.authorize_hold(mandate.gateway_mandate_id, Money(share.amount_cents, purchase.currency),
+                                  _idem_key(share.id, "hold", purchase.version, attempt), member_id=str(member.id))
 
-        if resp["status"] == "DECLINED":
-            hold = Hold.objects.create(
-                share=share, mandate=mandate, gateway_hold_id=f"declined_{share.id}_{share.card_attempts + 1}",
-                amount_cents=share.amount_cents, status=Hold.Status.DECLINED, decline_code=resp["decline_code"])
-            share.card_attempts += 1
-            share.save(update_fields=["card_attempts", "updated_at"])
-            if share.status != S.CARD_FAILED:
-                transition_share(share.id, S.CARD_FAILED, actor="rules", decline_code=resp["decline_code"])
-            return {"share_status": S.CARD_FAILED, "hold": _hold_dict(hold), "mandate_id": mandate.gateway_mandate_id,
-                    "group_counts": _group_counts(purchase), "_purchase_id": purchase.id}
+    if resp["status"] == "AUTHORIZED":
+        hold = Hold.objects.create(
+            share=share, mandate=mandate, gateway_hold_id=resp["hold_id"], amount_cents=share.amount_cents,
+            status=Hold.Status.AUTHORIZED, expires_at=parse_datetime(resp["expires_at"]))
+        if share.status == S.CARD_FAILED:
+            transition_share(share.id, S.VIEWING, actor="rules", reason="card_retry")
+        transition_share(share.id, S.HELD, actor="rules", hold_id=hold.gateway_hold_id)
+        check_funded(purchase.id)                       # may flip the whole purchase to funded
+        share.refresh_from_db()
+        return {"share_status": share.status, "hold": _hold_dict(hold),
+                "mandate_id": mandate.gateway_mandate_id, "group_counts": _group_counts(purchase),
+                "_purchase_id": purchase.id}
 
-        # status REJECTED (mandate expired, cap exceeded at the bank, ...)
-        raise RuleError(resp.get("reason", "hold_rejected"), resp.get("detail", "The hold was rejected."))
+    if resp["status"] == "DECLINED":
+        hold = Hold.objects.create(
+            share=share, mandate=mandate, gateway_hold_id=f"declined_{share.id}_{share.card_attempts + 1}",
+            amount_cents=share.amount_cents, status=Hold.Status.DECLINED, decline_code=resp["decline_code"])
+        share.card_attempts += 1
+        share.save(update_fields=["card_attempts", "updated_at"])
+        if share.status != S.CARD_FAILED:
+            transition_share(share.id, S.CARD_FAILED, actor="rules", decline_code=resp["decline_code"])
+        return {"share_status": S.CARD_FAILED, "hold": _hold_dict(hold), "mandate_id": mandate.gateway_mandate_id,
+                "group_counts": _group_counts(purchase), "_purchase_id": purchase.id}
+
+    # status REJECTED (mandate expired, cap exceeded at the bank, ...)
+    raise RuleError(resp.get("reason", "hold_rejected"), resp.get("detail", "The hold was rejected."))
 
 
 # --------------------------------------------------------------------------------------
@@ -259,14 +265,15 @@ def _place_hold(share_id, consent_id, agent_token_id, cap_cents: int) -> dict:
 def _release_share_money(gateway, share: Share, purchase: Purchase, reason: str) -> None:
     """Release the authorized hold (if any) and revoke the mandate for one share. Caller holds the DB locks."""
     hold = share.holds.filter(status=Hold.Status.AUTHORIZED).order_by("-created_at").first()
-    if hold:
-        gateway.release_hold(hold.gateway_hold_id, reason, _idem_key(share.id, "release", purchase.version))
-        hold.status = Hold.Status.RELEASED
-        hold.save(update_fields=["status", "updated_at"])
-    for mandate in share.mandates.filter(status=Mandate.Status.ACTIVE):
-        gateway.revoke_mandate(mandate.gateway_mandate_id, reason)
-        mandate.status = Mandate.Status.REVOKED
-        mandate.save(update_fields=["status", "updated_at"])
+    with event_context(purchase.group_id, purchase.id):          # so gateway events land under this group
+        if hold:
+            gateway.release_hold(hold.gateway_hold_id, reason, _idem_key(share.id, "release", purchase.version))
+            hold.status = Hold.Status.RELEASED
+            hold.save(update_fields=["status", "updated_at"])
+        for mandate in share.mandates.filter(status=Mandate.Status.ACTIVE):
+            gateway.revoke_mandate(mandate.gateway_mandate_id, reason)
+            mandate.status = Mandate.Status.REVOKED
+            mandate.save(update_fields=["status", "updated_at"])
 
 
 def release_all(purchase_id, reason: str) -> dict:
