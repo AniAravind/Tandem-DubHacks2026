@@ -282,7 +282,10 @@ class ConsentService:
         if previous:
             reconfirmation = {"from_cents": previous.amount_cents, "to_cents": share.amount_cents,
                               "available": hasattr(rules, "apply_share_change")}
+        from purchases.models import TripPlan
+        plan = TripPlan.objects.filter(group=group).first()
         return {
+            **({'plan_url': f'/p/{plan.id}'} if plan else {}),
             "reconfirmation": reconfirmation,
             "member": {"id": str(share.member_id), "display_name": share.member.display_name},
             "invited_by": organizer,

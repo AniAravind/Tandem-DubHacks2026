@@ -154,6 +154,10 @@ def close_if_decided(vote: Vote) -> Vote:
     """
     if vote.status != Vote.Status.OPEN:
         return vote
+    from purchases.models import TripPlan
+    plan = TripPlan.objects.filter(vote=vote).first()
+    if plan and len(active_members(vote.group_id)) < plan.expected_members and timezone.now() < vote.closes_at:
+        return vote
     eligible = eligible_voters(vote)
     ballots = Ballot.objects.filter(vote=vote, member__in=eligible)
     voted = ballots.count()

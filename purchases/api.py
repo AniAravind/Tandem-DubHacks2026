@@ -58,6 +58,9 @@ def current_member(request, group_id) -> Member:
     """Who is calling, and are they allowed to touch this group? 401 = we do not know you, 403 = not your group."""
     member_id = member_id_from_request(request)
     if member_id is None:
+        from purchases.models import TripPlan
+        if TripPlan.objects.filter(group_id=group_id).exists():
+            raise ApiError('join_required', 'Join this trip plan with your name and number in this browser first.', 401)
         if not settings.DEMO_MODE:
             raise ApiError("auth_not_configured", "Sign in with your personal link first.", 401)
         try:

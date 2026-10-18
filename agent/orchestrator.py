@@ -85,7 +85,7 @@ class Orchestrator:
 
     def run_tool(self, name: str, raw_args: str, actor: str) -> dict:
         if name not in TOOL_NAMES:
-            return self._reject(name, "unknown_tool", "Only the 6 listed tools exist.")
+            return self._reject(name, "unknown_tool", "Only the listed tools exist.")
         try:
             args = json.loads(raw_args or "{}")
         except json.JSONDecodeError:
@@ -211,6 +211,14 @@ class Orchestrator:
                     d["choices"] = choices
             presentation.append((name, d))
         attached = [m for name, d in presentation for m in cards.cards_for(name, d, labels, self.group.timezone)]
+        for name, data in self.tool_results:
+            if name == 'publish_plan':
+                from purchases.models import TripPlan
+                from purchases.plans import owner_url
+                plan = TripPlan.objects.filter(pk=data.get('plan_id'), source_group=self.group).first()
+                if plan:
+                    attached.append(AgentMessage(text='Your trip plan is ready. Open your organizer link, join with your name and number, then copy the group invite from the page. Each person will approve their own payment there.',
+                        link=owner_url(plan), private_to_member_id=str(self.group.organizer_id)))
         out = [AgentMessage(text=text)] if text else []
         public = [m for m in attached if not m.private_to_member_id]
         if out and len(public) == 1:                                # a single card rides on the text message

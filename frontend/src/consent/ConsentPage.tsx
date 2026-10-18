@@ -192,6 +192,7 @@ export default function ConsentPage() {
           </div></section></div>
       )}
 
+      {data?.plan_url && <p className="consent-plan-return"><Link className="btn" to={data.plan_url}>Back to your trip plan <Icon name="arrow"/></Link></p>}
       {showDecline && <DeclineSheet onPick={onDecline} onClose={() => setShowDecline(false)} />}
       {showReconfirm && data && (
         <ReconfirmSheet

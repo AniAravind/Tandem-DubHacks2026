@@ -1,6 +1,7 @@
 const DEMO_OTP = "000000";
 
 export type ConsentPayload = {
+  plan_url?: string;
   member: { id: string; display_name: string };
   invited_by: string;
   group_name: string;
