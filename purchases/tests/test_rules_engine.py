@@ -143,11 +143,6 @@ class ValidationTests(EngineBase):
             self.run_tool("check_status", {})
         self.assertEqual(self.run_tool("check_status", {})["error"]["code"], "rate_limited")
 
-    def test_unbuilt_tool_says_not_implemented(self):
-        purchase, _ = self.make_open_purchase()
-        result = self.run_tool("propose_fallback", {"purchase_id": str(purchase.id), "reason": "dropout"})
-        self.assertEqual(result["error"]["code"], "not_implemented")
-
 
 class VoteTests(EngineBase):
     def test_start_vote(self):
@@ -206,15 +201,16 @@ class VoteTests(EngineBase):
         closed = consensus.close_if_decided(vote)
         self.assertEqual((closed.status, closed.winner_key), ("closed", ""))
 
-    def test_last_ballot_through_the_api_closes_the_vote(self):
+    def test_a_majority_closes_the_vote_right_away(self):
         options = self.search()
         data = self.run_tool("start_vote", {"option_ids": [options[0]["id"], options[1]["id"]]})["data"]
         client = APIClient()
-        for member in self.members.values():
-            r = client.post(f"/api/v1/votes/{data['vote_id']}/ballots", {"choice_key": "1"}, format="json",
-                            HTTP_X_TANDEM_MEMBER=str(member.id))
-        self.assertEqual(r.json()["status"], "closed")
-        self.assertEqual(r.json()["tally"], {"1": 6, "2": 0})
+        responses = [client.post(f"/api/v1/votes/{data['vote_id']}/ballots", {"choice_key": "1"}, format="json",
+                                 HTTP_X_TANDEM_MEMBER=str(member.id)) for member in list(self.members.values())[:5]]
+        self.assertEqual(responses[2].json()["status"], "open")                  # 3 of 6 is not yet a majority
+        self.assertEqual(responses[3].json()["status"], "closed")                # 4 of 6 is: nobody can catch up
+        self.assertEqual(responses[3].json()["tally"], {"1": 4, "2": 0})
+        self.assertEqual((responses[4].status_code, responses[4].json()["error"]["code"]), (409, "vote_closed"))
 
 
 class CreatePurchaseTests(EngineBase):
