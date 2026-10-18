@@ -41,5 +41,9 @@ def get_gateway() -> VisaAgentGateway:
     from django.conf import settings
     if settings.PAYMENTS_GATEWAY == "simulated":
         from payments.simulated import SimulatedVisaAgentGateway
-        return SimulatedVisaAgentGateway.default()
+        gateway = SimulatedVisaAgentGateway.default()
+        # The web and worker dynos each keep their own in-memory copy. Re-read the database so this process
+        # knows about holds and mandates the OTHER one created (it only adds and updates, never forgets).
+        gateway.hydrate_from_db()
+        return gateway
     raise NotImplementedError("Only the simulated gateway exists in this build")

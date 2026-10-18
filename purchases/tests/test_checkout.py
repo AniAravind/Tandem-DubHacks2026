@@ -208,7 +208,7 @@ class RejectionTests(CheckoutBase):
         self.fund()
         self.merchant.fail = {"agent/checkout": (503, {"error": {"code": "merchant_down", "message": "try later"}})}
         result = rules.checkout(self.purchase.id)
-        self.assertEqual(result, {"status": "rejected", "reason": "merchant_down"})
+        self.assertEqual(result, {"status": "rejected", "reason": "merchant_error"})   # any 5xx = temporary
         self.assertEqual(self.merchant.calls.count("agent/checkout"), 2)       # first try + one retry
         self.assertEqual(self.gateway.captures, {})
         self.assertEqual(SignedRequest.objects.filter(purpose="checkout").count(), 2)    # each try signed freshly

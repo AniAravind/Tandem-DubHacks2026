@@ -4,6 +4,7 @@ from unittest import mock
 
 from django.test import TestCase, override_settings
 
+from agent.fakes import FakeRulesEngine
 from agent.tests.helpers import seed
 from chat.models import ChatMessage
 from core.models import Member
@@ -11,6 +12,7 @@ from core.models import Member
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
 @mock.patch.dict(os.environ, {"DEMO_SCRIPTED": "1"})
+@mock.patch("agent.orchestrator.get_engine", new=lambda group_id=None: FakeRulesEngine(group_id))   # real engine exists now
 class ScriptedDemoTest(TestCase):
     def setUp(self):
         self.group = seed()
