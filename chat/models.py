@@ -14,3 +14,15 @@ class ChatMessage(TimeStamped):
     quick_replies = models.JSONField(default=list, blank=True)
     channel = models.CharField(max_length=16, default="web")
     seq = models.BigIntegerField(db_index=True)             # per-group ordering for polling
+
+
+class PhotonSession(models.Model):
+    """One isolated direct-message agent; no shared demo identity or group routing."""
+    key = models.CharField(max_length=64, primary_key=True)
+    member = models.OneToOneField(Member, on_delete=models.CASCADE)
+    delivered_seq = models.BigIntegerField(default=0)
+
+
+class PhotonReceipt(models.Model):
+    external_id = models.CharField(max_length=64, primary_key=True)
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE)
