@@ -1,0 +1,76 @@
+name: Verify Tandem
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tandem_ci
+          POSTGRES_PASSWORD: ci_test_only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: ci-only-not-a-production-secret-key-for-isolated-tests
+      DEBUG: "1"
+      DATABASE_URL: postgres://postgres:ci_test_only@127.0.0.1:5432/tandem_ci
+      DATABASE_SSL_REQUIRE: "0"
+      REDIS_URL: redis://127.0.0.1:6379/15
+      CELERY_EAGER: "1"
+      PAYMENTS_GATEWAY: simulated
+      RUN_REDIS_INTEGRATION: "1"
+      AGENT_SIGNING_KEY_B64: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
+      FIELD_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
+      LOG_LEVEL: WARNING
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - run: python -m pip install -r requirements.lock.txt
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test --noinput --verbosity 1
+      - name: Real worker restart and scheduler checks
+        run: python scripts/ops/check_worker_restart.py
+        env:
+          OPS_ISOLATED_TESTS: "1"
+          CELERY_EAGER: "0"
+          TANDEM_REQUIRE_WORKER_HEARTBEAT: "1"
+  frontend-and-messages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - run: npm ci
+      - run: npm run test:photon
+      - run: npm --prefix frontend ci --include=dev
+      - run: npm --prefix frontend run lint
+      - run: npm --prefix frontend run build
