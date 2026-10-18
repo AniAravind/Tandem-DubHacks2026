@@ -75,6 +75,7 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 3600
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 # Tandem config
 PAYMENTS_GATEWAY = os.getenv("PAYMENTS_GATEWAY", "simulated")
@@ -91,3 +92,6 @@ MERCHANT_BASE_URL = os.getenv("MERCHANT_BASE_URL", "http://localhost:8000/mercha
 if (os.getenv("DYNO") or os.getenv("REDIS_URL") or os.getenv("TANDEM_SHARED_CACHE") == "1") and "test" not in sys.argv:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL,
         "OPTIONS": {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else {}}}
+
+# We deliberately do NOT ask browsers to preload HSTS for a throwaway demo domain (check --deploy warning W021).
+SILENCED_SYSTEM_CHECKS = ["security.W021"]
