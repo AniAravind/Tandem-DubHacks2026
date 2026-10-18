@@ -2,7 +2,7 @@ import { NavLink, Link, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 import { DEMO_GROUP } from "../../chat/demo";
 import "./shell.css";
-import tandemMark from "../../assets/tandem-mark.png";
+import tandemMark from "../../assets/tandem-mark-blue.png";
 
 export function Mark() {
   return <img className="tandem-mark" src={tandemMark} width="38" height="38" alt="" aria-hidden="true" />;

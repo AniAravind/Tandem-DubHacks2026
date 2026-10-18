@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import tandemMark from "../assets/tandem-mark.png";
+import tandemMark from "../assets/tandem-mark-blue.png";
 import PhoneStory from "./PhoneStory";
 import DemoRegistration from "./DemoRegistration";
 import "./landing.css";

@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { plainText } from "../../../shared/message-text.mjs";
-import tandemMark from "../assets/tandem-mark.png";
+import tandemMark from "../assets/tandem-mark-blue.png";
 import { CardView } from "../components/cards";
 import type { ChatMessage } from "./types";
 

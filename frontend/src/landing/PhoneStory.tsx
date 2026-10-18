@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import tandemMark from "../assets/tandem-mark.png";
+import tandemMark from "../assets/tandem-mark-blue.png";
 
 // A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Prices match the seeded
 // Tahoe demo (payments are simulated).
