@@ -8,7 +8,8 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from payments.services import ConsentError, ConsentService, assert_not_pan
+from core.session import set_session_cookie
+from payments.services import ConsentError, ConsentService, assert_not_pan, read_consent_token
 from purchases.api import ApiError, api_errors, current_member
 from purchases.models import Share
 
@@ -43,7 +44,10 @@ def _header_member(request) -> str:
 
 @public_consent(["GET"])
 def consent_detail(request, token):
-    return Response(svc.get_payload(token, _header_member(request)))
+    response = Response(svc.get_payload(token, _header_member(request)))
+    # Opening your personal link signs this browser in as you (a signed cookie, see core/session.py).
+    set_session_cookie(response, read_consent_token(token, _header_member(request))["share"].member_id)
+    return response
 
 
 @public_consent(["POST"])

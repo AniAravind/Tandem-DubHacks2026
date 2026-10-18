@@ -1,4 +1,4 @@
-import os, ssl
+import os, ssl, sys
 from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
@@ -79,6 +79,13 @@ if not DEBUG:
 # Tandem config
 PAYMENTS_GATEWAY = os.getenv("PAYMENTS_GATEWAY", "simulated")
 DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
+DEMO_ADMIN_KEY = os.getenv("DEMO_ADMIN_KEY", "")          # the backstage demo buttons stay locked while this is empty
+
+# Cache: demo switches like "demo:tamper_next" must be seen by every web process, so in production they live in Redis.
+# (Tests and plain local runs use the default in-memory cache.)
+if os.getenv("REDIS_URL") and "test" not in sys.argv:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
+                          "LOCATION": REDIS_URL + ("?ssl_cert_reqs=none" if REDIS_URL.startswith("rediss://") else "")}}
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
 # Merchant: "direct" = in-process stand-in (tests, and until the real mock merchant is on main); "http" = real calls.
