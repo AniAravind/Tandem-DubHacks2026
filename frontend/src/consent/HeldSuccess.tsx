@@ -2,9 +2,9 @@ import { Link } from "react-router-dom";
 import { formatUsd } from "./money";
 
 export default function HeldSuccess({
-  shareCents, last4, splitCount, groupId,
+  shareCents, last4, splitCount, groupId, onLeave,
 }: {
-  shareCents: number; last4: string; splitCount: number; groupId: string;
+  shareCents: number; last4: string; splitCount: number; groupId: string; onLeave: () => Promise<void>;
 }) {
   return (
     <section className="consent-card">
@@ -21,6 +21,7 @@ export default function HeldSuccess({
       </ol>
       <p className="muted">Simulated payment: no real money moves in this demo.</p>
       <div style={{ display: "grid", gap: 8 }}>
+        <button className="btn" onClick={() => { onLeave().catch(() => undefined); }}>Leave and release my hold</button>
         <Link className="btn btn-primary" to={`/chat/${groupId}`} style={{ textAlign: "center" }}>Back to chat</Link>
         <Link className="btn" to={`/g/${groupId}`} style={{ textAlign: "center" }}>View trip</Link>
       </div>

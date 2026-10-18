@@ -56,6 +56,14 @@ def post_card(group_id, message: AgentMessage) -> str:
     return message_id
 
 
+def send_private(group_id, member_id, message):
+    from core.models import Member
+    if not Member.objects.filter(pk=member_id, group_id=group_id, status="active").exists():
+        raise ValueError("Recipient is not an active member of this group")
+    message.private_to_member_id = str(member_id)
+    return post_card(group_id, message)
+
+
 def post_all(group_id, messages: list[AgentMessage]) -> None:
     for m in messages:
         post_card(group_id, m)
@@ -79,7 +87,7 @@ def handle_inbound(msg: InboundMessage) -> ChatMessage:
     if vote and handle_vote_reply(msg.group_id, msg.member_id, vote.group(1)):
         return stored
     if MENTION.search(msg.text):
-        schedule_agent(msg.group_id, msg.member_id)
+        schedule_agent(msg.group_id, msg.member_id, message_id=str(stored.id))
     return stored
 
 
@@ -88,10 +96,10 @@ def tool_calls_last_minute(group_id) -> int:
     return EventLog.objects.filter(group_id=group_id, type=EventType.AGENT_TOOL_CALLED, created_at__gte=since).count()
 
 
-def schedule_agent(group_id, member_id=None, event: dict | None = None) -> None:
+def schedule_agent(group_id, member_id=None, event: dict | None = None, message_id=None) -> None:
     """Run the agent in the Celery worker; if the broker is down, run it right here so the chat still answers."""
     from chat.tasks import run_agent_task
-    args = (str(group_id), str(member_id) if member_id else None, event)
+    args = (str(group_id), str(member_id) if member_id else None, event, message_id)
     try:
         run_agent_task.delay(*args)
     except Exception:                                           # noqa: BLE001
@@ -99,12 +107,28 @@ def schedule_agent(group_id, member_id=None, event: dict | None = None) -> None:
         run_agent(*args)
 
 
-def run_agent(group_id, member_id=None, event: dict | None = None) -> None:
+def run_agent(group_id, member_id=None, event: dict | None = None, message_id=None) -> None:
     from agent import orchestrator
     if tool_calls_last_minute(group_id) >= MAX_TOOL_CALLS_PER_MIN:
         post_card(group_id, AgentMessage(text=SLOW_DOWN_TEXT))
         return
+    if event and member_id is None and event.get("type") in {"vote_closed", "share_declined"}:
+        if hasattr(orchestrator.get_engine(group_id), "snapshot"):
+            post_all(group_id, orchestrator.run(group_id, None, event))
+            return
+        # Trusted scheduler events still act through a real active group member.
+        group = Group.objects.select_related("organizer").get(pk=group_id)
+        if group.organizer_id and group.organizer.status == "active":
+            if event["type"] == "vote_closed":
+                from purchases.models import Purchase
+                if Purchase.objects.filter(group=group, option_id=event.get("winner_option_id")).exists():
+                    return
+            post_all(group_id, orchestrator.Orchestrator(group_id).run(f"member:{group.organizer_id}", event=event))
+        return
     inbound = InboundMessage(group_id=str(group_id), member_id=member_id, text="") if member_id else None
+    if message_id and inbound:
+        stored = ChatMessage.objects.get(pk=message_id, group_id=group_id, member_id=member_id, direction="in")
+        inbound.text = stored.text_redacted
     post_all(group_id, orchestrator.run(group_id, inbound, event))
 
 
@@ -129,21 +153,46 @@ def handle_vote_reply(group_id, member_id, key: str) -> bool:
     return True
 
 
+@transaction.atomic
 def _real_ballot(vote, member_id, key: str) -> bool:
     """Eshaan's ballot view does the validation and logging; we only relay the result to the chat."""
     from rest_framework.test import APIRequestFactory
     from purchases.api import cast_ballot
+    from purchases.models import Vote
+    vote = Vote.objects.select_for_update().get(pk=vote.pk)
     request = APIRequestFactory().post(f"/api/v1/votes/{vote.id}/ballots", {"choice_key": key}, format="json",
                                        HTTP_X_TANDEM_MEMBER=str(member_id))
     response = cast_ballot(request, vid=vote.id)
     if response.status_code >= 400:
         post_card(vote.group_id, AgentMessage(text=response.data["error"]["message"], private_to_member_id=str(member_id)))
         return True
+    vote.refresh_from_db()
     tally = response.data["tally"]
+    from purchases.models import Option
+    def choice_data(choice):
+        option = Option.objects.filter(pk=choice.get("option_id"), group_id=vote.group_id).first()
+        return {**choice, "count": tally.get(choice["key"], 0),
+                "per_person_cents": (option.meta or {}).get("per_person_cents", 0) if option else 0}
     post_card(vote.group_id, AgentMessage(text="", card=vote_card({
         "vote_id": str(vote.id), "closes_at": vote.closes_at.isoformat(), "quorum": vote.quorum,
         "voted": response.data["voted"],
-        "choices": [{**c, "count": tally.get(c["key"], 0)} for c in vote.choices]})))
+        "winner_key": vote.winner_key,
+        "choices": [choice_data(c) for c in vote.choices]})))
+    if vote.status == "closed" and vote.winner_key:
+        from purchases.rules import RulesEngine
+        from purchases.models import Purchase
+        winner = next(c for c in vote.choices if c["key"] == vote.winner_key)
+        if vote.purpose == "pick_option":
+            # The engine rejects duplicate open purchases under its own transaction.
+            if not Purchase.objects.filter(group_id=vote.group_id, option_id=winner["option_id"]).exists():
+                result = RulesEngine().execute("create_purchase", {
+                    "option_id": winner["option_id"],
+                    "member_ids": [str(m.id) for m in vote.group.members.filter(status="active")],
+                    "deadline_hours": 6}, f"member:{member_id}")
+                if result.get("ok"):
+                    from purchases.rules import _post_group_update
+                    _post_group_update(result["data"]["purchase_id"])
+                    post_card(vote.group_id, AgentMessage(text=f"🗳️ {winner['label']} wins, {tally[vote.winner_key]} votes to {sum(tally.values()) - tally[vote.winner_key]}."))
     return True
 
 

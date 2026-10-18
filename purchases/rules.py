@@ -421,7 +421,7 @@ def _place_hold_locked(gateway, purchase, share, member, consent_id, agent_token
         created = gateway.create_purchase_mandate(
             token.gateway_token_id, money_cap, option.merchant_slug, option.listing_ref,
             _iso_utc(purchase.deadline_at), str(consent.id),
-            _idem_key(share.id, "mandate", purchase.version))
+            _idem_key(share.id, "mandate", purchase.version, str(consent.id)))
         mandate = Mandate.objects.create(
             share=share, member=member, agent_token=token, consent=consent, merchant_slug=option.merchant_slug,
             listing_ref=option.listing_ref, cap_cents=cap_cents, currency=purchase.currency,

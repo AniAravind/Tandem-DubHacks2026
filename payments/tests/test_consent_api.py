@@ -51,12 +51,12 @@ class ConsentApiTests(TestCase):
         self.addCleanup(mock.patch("purchases.rules.get_gateway", return_value=self.gw).start())
 
     def _approve(self, token, last4="1111", cap=20000, sha=None, assertion=None):
-        payload = self.client.get(f"/api/v1/consent/{token}").json()
+        payload = self.client.get(f"/api/v1/consent/{token}?cap_cents={cap}").json()
         tok = self.client.post(f"/api/v1/consent/{token}/tokenize",
                                {"transient_card_token": f"tt_sim_{last4}_ab12"}, format="json").json()
         return self.client.post(f"/api/v1/consent/{token}/approve", {
             "agent_token_id": tok["agent_token_id"], "cap_cents": cap,
-            "consent_text_sha256": sha or payload["consent_text_sha256"],
+            "consent_text_sha256": sha or payload.get("consent_text_sha256", "invalid"),
             "assertion": assertion or OTP,
         }, format="json")
 
@@ -182,3 +182,51 @@ class ConsentApiTests(TestCase):
         row = AgentToken.objects.get(member=member)
         self.assertEqual(row.card_last4, "1111")
         self.assertNotIn("4111", str(row.scope))
+
+
+    @override_settings(DEMO_MODE=True)
+    def test_declined_card_can_be_replaced(self):
+        share, token, _ = build_purchase("Jordan")
+        self.assertEqual(self._approve(token, last4="0002").status_code, 402)
+        response = self._approve(token, last4="1111")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(Hold.objects.filter(share=share, status="authorized").count(), 1)
+
+    def test_lowered_cap_changes_copy_and_hash(self):
+        _, token, _ = build_purchase("Alex")
+        original = self.client.get(f"/api/v1/consent/{token}").json()
+        lowered = self.client.get(f"/api/v1/consent/{token}?cap_cents=18000").json()
+        self.assertNotEqual(original["consent_text_sha256"], lowered["consent_text_sha256"])
+        self.assertIn("$180.00", lowered["can_never"][0])
+
+    def test_tokenization_retry_and_new_attempt(self):
+        _, token, _ = build_purchase("Alex")
+        url = f"/api/v1/consent/{token}/tokenize"
+        a = self.client.post(url, {"transient_card_token": "tt_sim_1111_attemptA"}, format="json")
+        b = self.client.post(url, {"transient_card_token": "tt_sim_1111_attemptA"}, format="json")
+        c = self.client.post(url, {"transient_card_token": "tt_sim_0002_attemptB"}, format="json")
+        self.assertEqual(a.json(), b.json())
+        self.assertEqual(c.status_code, 200)
+        self.assertNotEqual(a.json()["agent_token_id"], c.json()["agent_token_id"])
+
+    @override_settings(DEMO_MODE=True)
+    def test_reconfirm_records_fresh_consent_when_backend_available(self):
+        from payments.models import Consent
+        share, _, member = build_purchase("Alex")
+        Consent.objects.create(member=member, share=share, consent_text_version="v1",
+            consent_text_sha256="0" * 64, amount_cents=17000, cap_cents=21000,
+            method="otp", accepted_at=timezone.now())
+        with mock.patch("purchases.rules.apply_share_change", create=True, return_value={"share_status": "held"}) as apply:
+            response = self.client.post(f"/api/v1/shares/{share.id}/reconfirm", {"assertion": OTP},
+                format="json", HTTP_X_TANDEM_MEMBER=str(member.id))
+        self.assertEqual(response.status_code, 200, response.content)
+        fresh = Consent.objects.get(pk=apply.call_args.args[1])
+        self.assertEqual(fresh.amount_cents, share.amount_cents)
+        self.assertEqual(fresh.cap_cents, 21000)
+
+    def test_spaced_pan_in_unexpected_field_rejected(self):
+        _, token, _ = build_purchase("Alex")
+        response = self.client.post(f"/api/v1/consent/{token}/tokenize",
+            {"transient_card_token": "tt_sim_1111_attempt", "unexpected": "4111 1111 1111 1111"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "pan_not_allowed")

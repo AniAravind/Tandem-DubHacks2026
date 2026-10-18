@@ -7,7 +7,7 @@ export default function PasskeyConfirm({
   onAssert: (assertion: Assertion) => void; busy: boolean;
 }) {
   const [otp, setOtp] = useState("");
-  const [useOtp, setUseOtp] = useState(false);
+  const [useOtp, setUseOtp] = useState(true);
 
   async function withPasskey() {
     try {
@@ -35,7 +35,7 @@ export default function PasskeyConfirm({
   if (useOtp) {
     return (
       <div>
-        <label htmlFor="otp">Demo code (also in the server log)</label>
+        <label htmlFor="otp">Simulated confirmation code: {DEMO_OTP}</label>
         <input id="otp" className="field" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value)} />
         <button className="btn btn-primary" type="button" disabled={busy || otp.length !== 6}
           onClick={() => onAssert({ method: "otp", code: otp || DEMO_OTP })}>
@@ -47,7 +47,7 @@ export default function PasskeyConfirm({
 
   return (
     <button className="btn" type="button" disabled={busy} onClick={withPasskey}>
-      Confirm with Face ID / passkey
+      Confirm (simulated passkey)
     </button>
   );
 }

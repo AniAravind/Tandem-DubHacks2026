@@ -44,8 +44,7 @@ def _header_member(request) -> str:
 
 @public_consent(["GET"])
 def consent_detail(request, token):
-    response = Response(svc.get_payload(token, _header_member(request)))
-    # Opening your personal link signs this browser in as you (a signed cookie, see core/session.py).
+    response = Response(svc.get_payload(token, _header_member(request), request.query_params.get("cap_cents")))
     set_session_cookie(response, read_consent_token(token, _header_member(request))["share"].member_id)
     return response
 

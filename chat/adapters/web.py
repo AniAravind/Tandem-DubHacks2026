@@ -1,11 +1,13 @@
 from django.db import transaction
 from django.db.models import Max
 from chat.models import ChatMessage
+from core.models import Group
 from chat.adapters.base import AgentMessage, InboundMessage
 
 
 def next_seq(group_id) -> int:
     """Call inside a transaction: locks the group's messages so two writers never get the same seq."""
+    Group.objects.select_for_update().get(pk=group_id)
     return (ChatMessage.objects.select_for_update().filter(group_id=group_id).aggregate(m=Max("seq"))["m"] or 0) + 1
 
 

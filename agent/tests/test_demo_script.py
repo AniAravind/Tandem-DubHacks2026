@@ -16,6 +16,10 @@ from core.models import Member
 class ScriptedDemoTest(TestCase):
     def setUp(self):
         self.group = seed()
+        from agent.fakes import FakeRulesEngine
+        patcher = mock.patch("agent.orchestrator.get_engine", side_effect=lambda gid=None: FakeRulesEngine(gid or self.group.id))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.m = {m.display_name: m for m in Member.objects.filter(group=self.group)}
 
     def say(self, who, text):

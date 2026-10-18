@@ -82,8 +82,8 @@ def expense(orch, actor, match):
     emoji = EMOJI.get(item.lower(), "🧾")
     owes = d.get("owes", [])
     names = ", ".join(o["display_name"] for o in owes)
-    tail = f"\nBalances: {names} each owe {d['payer']} {usd_exact(d['per_person_cents'])}." if owes else ""
-    return (f"Added {emoji} {d['description']} {usd_exact(d['amount_cents'])}, paid by {d['payer']}, "
+    tail = f"\nBalances: {names} each owe {d.get('payer', next((m.display_name for m in _members(orch) if str(m.id) == member_id), 'Member'))} {usd_exact(d['per_person_cents'])}." if owes else ""
+    return (f"Added {emoji} {d['description']} {usd_exact(d['amount_cents'])}, paid by {d.get('payer', next((m.display_name for m in _members(orch) if str(m.id) == member_id), 'Member'))}, "
             f"split {d['split_count']} ways ({usd_exact(d['per_person_cents'])} each).{tail}")
 
 

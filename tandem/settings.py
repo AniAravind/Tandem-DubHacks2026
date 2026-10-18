@@ -81,13 +81,13 @@ PAYMENTS_GATEWAY = os.getenv("PAYMENTS_GATEWAY", "simulated")
 DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
 DEMO_ADMIN_KEY = os.getenv("DEMO_ADMIN_KEY", "")          # the backstage demo buttons stay locked while this is empty
 
-# Cache: demo switches like "demo:tamper_next" must be seen by every web process, so in production they live in Redis.
-# (Tests and plain local runs use the default in-memory cache.)
-if os.getenv("REDIS_URL") and "test" not in sys.argv:
-    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
-                          "LOCATION": REDIS_URL + ("?ssl_cert_reqs=none" if REDIS_URL.startswith("rediss://") else "")}}
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
 # Merchant: "direct" = in-process stand-in (tests, and until the real mock merchant is on main); "http" = real calls.
 MERCHANT_MODE = os.getenv("MERCHANT_MODE", "direct")
 MERCHANT_BASE_URL = os.getenv("MERCHANT_BASE_URL", "http://localhost:8000/merchants")
+
+# Shared cache is required across Heroku web and worker processes.
+if (os.getenv("DYNO") or os.getenv("REDIS_URL") or os.getenv("TANDEM_SHARED_CACHE") == "1") and "test" not in sys.argv:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL,
+        "OPTIONS": {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else {}}}
