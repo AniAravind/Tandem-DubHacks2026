@@ -19,7 +19,7 @@ class BuyingTests(TestCase):
 
     def brief(self, **changes):
         ChatMessage.objects.create(group=self.source, member=self.owner, direction='in', seq=2,
-            text_redacted='Buy a gift for Rishab with 4 buyers, 30 per person')
+            text_redacted=f"Buy a gift for Rishab with {changes.get('group_size',4)} buyers, 30 per person")
         args = {'goal':'Gift for Rishab','category':'gift_bundle','group_size':4,'budget_per_person':30,
                 'summary':'Choose a thoughtful birthday gift.','recommendations':['Choose a shared experience or a gift based on his hobbies.'], **changes}
         result = self.engine.execute('save_buying_brief',args,self.actor)
@@ -104,3 +104,12 @@ class BuyingTests(TestCase):
         self.path=f'/api/v1/plans/{self.plan.id}'
         self.owner_token=parse_qs(urlparse(owner_url(self.plan)).query)['owner'][0]
         SharedPlanTests.test_join_to_individual_payments_to_booking(self)
+
+    def test_explicit_headcounts_override_model_interpretation(self):
+        from purchases.briefs import explicit_buyer_count
+        self.assertEqual(explicit_buyer_count('splitting with 4 people total'),4)
+        self.assertEqual(explicit_buyer_count('For me and 4 friends'),5)
+        self.assertEqual(explicit_buyer_count('for myself'),1)
+        self.brief()
+        result=self.engine.execute('save_buying_brief',{'goal':'Gift','category':'gift_bundle','group_size':5},self.actor)
+        self.assertEqual(result['error']['code'],'buyer_count_mismatch')

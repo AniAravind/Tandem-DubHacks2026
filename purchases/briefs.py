@@ -1,5 +1,6 @@
 """Buying requirements are user intent, not a merchant offer or payment authorization."""
 import uuid
+import re
 
 from django.db import transaction
 
@@ -10,12 +11,32 @@ from core.models import Group
 from purchases.models import TripPlan
 
 
+def explicit_buyer_count(text):
+    """Only unambiguous stated counts; leave other language to clarification."""
+    total = re.search(r'\b(\d+)\s+(?:people|persons|buyers|participants)\s+(?:in\s+)?total\b|\b(?:total(?:\s+of)?|group\s+of)\s+(\d+)\b', text, re.I)
+    if total:
+        return int(next(v for v in total.groups() if v))
+    friends = re.search(r'\b(?:me|myself|I)\s+and\s+(\d+)\s+(?:friends|others)\b', text, re.I)
+    if friends:
+        return int(friends.group(1)) + 1
+    buyers = re.search(r'\b(\d+)\s+buyers\b', text, re.I)
+    if buyers:
+        return int(buyers.group(1))
+    if re.search(r'\b(?:for myself|just me|one buyer|solo purchase)\b', text, re.I):
+        return 1
+    return None
+
+
 @transaction.atomic
 def save(member, args):
     from purchases.rules import RuleError
     session = PhotonSession.objects.select_for_update().filter(member=member).first()
     if session is None:
         raise RuleError('private_planning_only', 'Save buying requirements in the individual conversation.')
+    latest = ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').values_list('text_redacted', flat=True).first() or ''
+    count = explicit_buyer_count(latest)
+    if count is not None and args['group_size'] != count:
+        raise RuleError('buyer_count_mismatch', f'The latest request explicitly specifies {count} total buyer(s). Use group_size={count}.')
     budget = args.get('budget_per_person')
     if budget is not None:
         known = set()
