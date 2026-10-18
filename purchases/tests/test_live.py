@@ -175,7 +175,7 @@ class LiveSearchTests(TestCase):
         self.session.refresh_from_db()
         self.assertEqual(self.session.planning_state['budget_per_person_cents'],3000)
 
-    def test_research_can_precede_brief_and_preserves_sourced_answer(self):
+    def test_research_can_precede_brief_and_keeps_source_facts(self):
         self.say("Cabin weekend for 6 people, $200 each, with a hot tub")
         responses = iter([
             reply(calls=[tool_call('live_search', {'query':'Tahoe hot tub cabin', 'kind':'stay', 'group_size':6})]),
@@ -184,7 +184,8 @@ class LiveSearchTests(TestCase):
             reply('My pick is Blue Bear: the hot tub earns its keep. https://www.vrbo.com/2023227312345678ha'),
         ])
         out = Orchestrator(self.group.id, llm_chat=lambda *a, **kw: next(responses)).run(self.actor)
-        self.assertIn('the hot tub earns its keep', out[0].text)
+        self.assertIn('https://www.vrbo.com/2023227312345678ha', out[0].text)
+        self.assertNotIn('the hot tub earns its keep', out[0].text)
         self.session.refresh_from_db()
         self.assertTrue(LiveOffer.objects.filter(group=self.group,
             brief_revision=self.session.planning_state['revision']).exists())

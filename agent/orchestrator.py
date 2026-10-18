@@ -447,12 +447,11 @@ class Orchestrator:
             text = cards.compare_text(presenting[-1][1])
         elif presenting and presenting[-1][0] == 'live_search':
             batches = [data for name,data in presenting if name == 'live_search']
-            if not text or not safety.urls_in(text):
-                # Keep source-backed recommendations chosen by the model. Use the
-                # complete server-written results only when narration is absent.
-                text = '\n\n'.join((data.get('query','Research')+'\n\n' if len(batches)>1 else '')+cards.live_offers_text(data) for data in batches)
-                if len(batches)>1:
-                    text += '\n\nTo choose from an earlier section, tell me the type and title, such as the hotel name. A letter alone selects from the latest search.'
+            # Render retrieved titles, prices and URLs directly: free-form model
+            # narration can attach a real price or URL to an invented product.
+            text = '\n\n'.join((data.get('query','Research')+'\n\n' if len(batches)>1 else '')+cards.live_offers_text(data) for data in batches)
+            if len(batches)>1:
+                text += '\n\nTo choose from an earlier section, tell me the type and title, such as the hotel name. A letter alone selects from the latest search.'
         elif any(name == 'search_options' for name, data in self.tool_results):
             from chat.models import PhotonSession
             if PhotonSession.objects.filter(member__group=self.group).exists():
