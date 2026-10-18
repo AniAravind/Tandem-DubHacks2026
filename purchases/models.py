@@ -19,6 +19,16 @@ class Option(TimeStamped):
     explanation_facts = models.JSONField(default=list)         # structured facts the LLM may cite
 
 
+class TripPlan(TimeStamped):
+    source_group = models.ForeignKey(Group, on_delete=models.PROTECT, related_name="published_plans")
+    group = models.OneToOneField(Group, on_delete=models.CASCADE, related_name="trip_plan")
+    selected_option = models.OneToOneField(Option, on_delete=models.PROTECT)
+    vote = models.OneToOneField("Vote", on_delete=models.PROTECT)
+    title = models.CharField(max_length=120)
+    summary = models.TextField()
+    expected_members = models.PositiveSmallIntegerField()
+
+
 class Vote(TimeStamped):
     class Purpose(models.TextChoices):
         PICK_OPTION = "pick_option"; FALLBACK = "fallback"; PRICE_CHANGE = "price_change"; CANCEL = "cancel"

@@ -782,6 +782,7 @@ class RulesEngine:
     def __init__(self):
         self.schemas = toolschema.load_tool_schemas()
         self.tools = {
+            "publish_plan": self._publish_plan,
             "search_options": self._search_options, "start_vote": self._start_vote,
             "create_purchase": self._create_purchase, "check_status": self._check_status,
             "propose_fallback": self._propose_fallback, "add_expense": self._add_expense}
@@ -839,7 +840,8 @@ class RulesEngine:
     # ------------------------------------------------------------------ the six tools
     def _search_options(self, member: Member, args: dict) -> dict:
         members = consensus.active_members(member.group_id)
-        if args["group_size"] != len(members):
+        from purchases.plans import private_planner
+        if args["group_size"] != len(members) and not private_planner(member):
             raise RuleError("group_size_mismatch", f"The group has {len(members)} active members, not {args['group_size']}.")
         budget_max = args.get("budget_per_person_max")
         ranked = consensus.rank_options(
@@ -854,6 +856,7 @@ class RulesEngine:
                 category=args["category"], title=listing.title, total_cents=c.total_cents, capacity=listing.capacity,
                 features=listing.features, score=c.score, explanation_facts=c.facts,
                 meta={**listing.meta, "search_id": search_id, "rank": rank, "per_person_cents": c.per_person_cents,
+                      "location": args.get("location", ""),
                       "group_size": args["group_size"], **self._trip_dates(args)}))
         log_event(EventType.OPTIONS_RANKED, actor="rules", group_id=member.group_id,
                   payload={"count": len(options), "top": options[0].title if options else None})
@@ -865,6 +868,9 @@ class RulesEngine:
         return {k: v for k, v in (("check_in", dates.get("start")), ("check_out", dates.get("end"))) if v}
 
     def _start_vote(self, member: Member, args: dict) -> dict:
+        from purchases.plans import private_planner
+        if private_planner(member):
+            raise RuleError('publish_plan_required', 'This is a private planning conversation. Agree on an option, then use publish_plan to create the group link; people join and accept on the website.')
         ids = args["option_ids"]
         if len(set(ids)) != len(ids):
             raise RuleError("invalid_arguments", "option_ids must be different from each other.")
@@ -882,6 +888,16 @@ class RulesEngine:
                 "choices": [{"key": c["key"], "label": c["label"]} for c in vote.choices]}
 
     def _create_purchase(self, member: Member, args: dict) -> dict:
+        from purchases.models import TripPlan
+        from purchases.plans import private_planner
+        if private_planner(member):
+            raise RuleError('publish_plan_required', 'Publish the shared plan first. Payments happen on the website after participants join.')
+        plan = TripPlan.objects.filter(group_id=member.group_id).first()
+        if plan:
+            participants = {str(i) for i in member.group.members.filter(status='active').values_list('id', flat=True)}
+            if (member.group.organizer_id != member.id or len(participants) != plan.expected_members
+                    or set(args['member_ids']) != participants or plan.vote.ballots.count() != plan.expected_members):
+                raise RuleError('roster_not_ready', 'The organizer can open payments for the complete roster once everyone has joined and accepted the plan.')
         option = self._own(Option, args["option_id"], member, "option")
         # R3: only the option that WON a closed vote can be bought.
         won = False
@@ -927,6 +943,10 @@ class RulesEngine:
         tasks.schedule_purchase_jobs(purchase, shares)
         return {"purchase_id": str(purchase.id), "deadline_at": ser.iso(purchase.deadline_at),
                 "shares_created": len(shares), "consent_links_sent": sent}
+
+    def _publish_plan(self, member: Member, args: dict) -> dict:
+        from purchases.plans import publish
+        return publish(member, args)
 
     def _check_status(self, member: Member, args: dict) -> dict:
         if "purchase_id" in args:

@@ -1,7 +1,11 @@
 from django.urls import path
 from purchases import api
+from purchases import plans
 
 urlpatterns = [
+    path("plans/<uuid:plan_id>", plans.detail),
+    path("plans/<uuid:plan_id>/join", plans.join),
+    path("plans/<uuid:plan_id>/fund", plans.fund),
     path("groups/<uuid:gid>", api.group_detail),
     path("groups/<uuid:gid>/members/me/preferences", api.my_preferences),
     path("groups/<uuid:gid>/options", api.options),

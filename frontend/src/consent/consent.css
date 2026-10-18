@@ -158,3 +158,5 @@
 .mobile-share-summary{display:none}@media(max-width:620px){.mobile-share-summary{display:block;margin:24px 0}.mobile-share-summary .share-summary{border:1px solid var(--line);border-radius:10px;padding:22px;background:var(--surface)}.mobile-share-summary .hold-note{margin-top:14px}.consent-review>.share-summary{display:none}.consent-form-grid{gap:12px}.consent-review{padding-top:2px}.consent-details>.consent-listing-title{margin-top:12px}}
 
 .consent-page summary{min-height:44px;padding:12px 0;cursor:pointer}.consent-page .field[type="range"]{padding:0;accent-color:var(--tandem-600)}
+
+.consent-plan-return{text-align:center;margin:28px auto;max-width:520px}

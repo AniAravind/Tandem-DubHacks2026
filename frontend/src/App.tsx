@@ -4,6 +4,7 @@ import "./styles/tokens.css";
 import Chat from "./chat/ChatPage";
 
 import Dashboard from "./dashboard/DashboardPage";
+import PlanPage from "./plans/PlanPage";
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/g/demo" replace />} />
         <Route path="/chat/:groupId" element={<Chat />} />
         <Route path="/c/:token" element={<ConsentPage />} />
+        <Route path="/p/:planId" element={<PlanPage />} />
         <Route path="/g/:groupId" element={<Dashboard />} />
       </Routes>
     </BrowserRouter>

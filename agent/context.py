@@ -28,6 +28,15 @@ def build_group_state(group: Group, engine=None, event: dict | None = None) -> d
                     for m in members],
         "must_have_counts": dict(wants),                       # how many people asked for each feature; no names, no budgets
     }
+    from chat.models import PhotonSession
+    if PhotonSession.objects.filter(member__group=group).exists():
+        state['mode'] = 'private_planning'
+        state['planning_instructions'] = 'Plan for the intended trip size, not the one person in this private conversation. Once the user agrees on an option, publish_plan creates a separate website group. Never start a vote or collect payment here.'
+        from purchases.serializers import latest_options_json
+        state['planning_options'] = [
+            {**{key: o[key] for key in ('id', 'rank', 'title', 'total_cents', 'per_person_cents', 'group_size', 'features')},
+             'dates': {key: o['meta'].get(key) for key in ('check_in', 'check_out')}, 'location': o['meta'].get('location', '')}
+            for o in latest_options_json(group)['options'][:3]]
     purchase = Purchase.objects.filter(group=group, state__in=LIVE_PURCHASE_STATES).select_related("option").order_by("-created_at").first()
     if purchase:
         statuses = Counter(purchase.shares.filter(superseded_by__isnull=True).values_list("status", flat=True))
