@@ -1,4 +1,6 @@
 import json
+import httpx
+from openai import BadRequestError
 
 from django.test import TestCase
 
@@ -61,6 +63,36 @@ class OrchestratorTest(TestCase):
         first = json.loads([m for m in llm.requests[1] if m["role"] == "tool"][0]["content"])
         self.assertEqual(first["error"]["code"], "schema_invalid")
         self.assertEqual(sum(1 for m in out if m.card and m.card.type == "OptionCard"), 3)
+
+    def provider_validation_error(self):
+        return BadRequestError("Tool validation failed", response=httpx.Response(400, request=httpx.Request("POST", "https://provider.invalid")),
+                               body={"code": "tool_use_failed", "failed_generation": "untrusted provider content"})
+
+    def test_provider_rejection_retries_with_dollar_guidance_before_execution(self):
+        o, llm = self.orch(self.provider_validation_error(),
+                          reply(calls=[tool_call("search_options", {**SEARCH, "budget_per_person_max": 300})]),
+                          reply("Here are the options."))
+        out = o.run(self.actor)
+        correction = llm.requests[1][-1]
+        self.assertEqual(correction['role'], 'system')
+        self.assertIn('$300 means 300, not 30000', correction['content'])
+        self.assertNotIn('untrusted provider content', json.dumps(llm.requests))
+        self.assertEqual(sum(m.card.type == 'OptionCard' for m in out if m.card), 3)
+        self.assertEqual(EventLog.objects.filter(type='agent.tool_called').count(), 1)
+
+    def test_repeated_provider_rejection_stops_without_executing_tools(self):
+        o, llm = self.orch(self.provider_validation_error(), self.provider_validation_error())
+        out = o.run(self.actor)
+        self.assertEqual([m.text for m in out], [FAILURE_TEXT])
+        self.assertEqual(len(llm.requests), 2)
+        self.assertEqual(o.tool_results, [])
+
+    def test_search_budget_schema_explicitly_uses_dollars(self):
+        from agent.orchestrator import SCHEMAS
+        schema = SCHEMAS['search_options']
+        self.assertEqual(validate({**SEARCH, 'budget_per_person_max': 300}, schema), [])
+        self.assertTrue(validate({**SEARCH, 'budget_per_person_max': 30000}, schema))
+        self.assertIn('USD dollars', schema['properties']['budget_per_person_max']['description'])
 
     def test_ids_from_another_group_rejected(self):
         other = Group.objects.create(name="Other")

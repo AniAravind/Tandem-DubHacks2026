@@ -8,6 +8,7 @@ import os
 import pathlib
 
 from django.conf import settings
+from openai import BadRequestError
 
 from agent import cards, demo_script, safety
 from agent.context import build_messages
@@ -108,6 +109,21 @@ class Orchestrator:
         for attempt in range(2):                                    # one retry on timeout / API error
             try:
                 return self.llm_chat(messages, TOOLS, **kw)
+            except BadRequestError as exc:
+                if exc.code == "tool_use_failed":
+                    # Provider validation occurs before a tool reaches our loop.
+                    # Give the next attempt corrective context; never execute or
+                    # echo the provider's untrusted failed_generation payload.
+                    log.warning("Provider rejected generated tool arguments (attempt %s)", attempt + 1)
+                    if attempt == 0:
+                        messages.append({"role": "system", "content": (
+                            "Your previous generated tool call was rejected by provider schema validation. "
+                            "No tool from that response executed. Regenerate using the exact provided schema. "
+                            "search_options.budget_per_person_max is USD dollars: $300 means 300, not 30000. "
+                            "Preserve the user's intended budget; do not clamp or increase it. "
+                            "Use group_state.current_date for relative dates. If uncertain, ask for clarification.")})
+                else:
+                    log.warning("Provider rejected AI request (attempt %s, HTTP 400)", attempt + 1)
             except Exception:                                       # noqa: BLE001
                 log.warning("xAI call failed (attempt %s)", attempt + 1, exc_info=True)
         return None
