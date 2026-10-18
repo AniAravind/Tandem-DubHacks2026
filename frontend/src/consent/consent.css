@@ -365,3 +365,7 @@
 }
 
 .payment-preview-note{font-size:12px;color:var(--ink-600);text-align:right;line-height:1.5}
+
+/* simplified: tighter spacing on phones */
+@media(max-width:700px){.consent-intro h1{font-size:26px;margin-bottom:6px}.consent-invitation{margin:0 0 14px}.consent-listing-title{margin-top:4px}
+  .consent-promises li{padding:4px 0;font-size:14px}.consent-promises section,.consent-promises>div{padding:14px 16px}}

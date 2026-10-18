@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, setDemoMember, getDemoMember } from "../api/client";
 
 import { Composer } from "./Composer";
@@ -108,10 +108,10 @@ export default function ChatPage() {
     return <AppShell groupId={groupId}><main className="chat-page" aria-busy={!error}><p className="muted">{error ?? "Loading chat…"}</p></main></AppShell>;
   }
   return (
-    <AppShell groupId={groupId} planName={group.name}><div className="page-topbar"><div className="breadcrumb">Your space<span>/</span>Group chat</div><Link className="text-link" to={`/g/${groupId}`}>View overview<Icon name="arrow"/></Link></div><main className="chat-page">
+    <AppShell groupId={groupId} planName={group.name}><main className="chat-page">
       <header className="chat-header">
         <div>
-          <p className="eyebrow">THE GROUP CONVERSATION</p><h1>{group.name}</h1>
+          <h1>{group.name}</h1>
           <p className="muted">{group.members.length} people</p>
         </div>
         {group.can_switch_member === false ? <span className="signed-in">Signed in as <strong>{me.display_name}</strong></span> : <MemberSwitcher members={group.members} meId={me.id} onChange={(m) => {
@@ -123,7 +123,7 @@ export default function ChatPage() {
       </header>
       {error ? <p className="banner" role="status">{error}</p> : null}
       {messages.length === 0 ? (
-        <section className="chat-welcome"><span className="welcome-symbol">↗</span><p className="eyebrow">FROM “WE SHOULD” TO “WE’RE GOING”</p><h2>Make a plan.<br/>Bring everyone along.</h2><p>Tandem finds the options, keeps the group in sync, and makes sure no one has to pay for everyone.</p><button className="btn primary" onClick={() => reply("@tandem can you find us a cabin? like 150-200 each")}>Find a place for the group <Icon name="arrow"/></button><span className="fine">Or mention @tandem in a message below.</span></section>
+        <section className="chat-welcome"><h2>Plan something together.</h2><p>Mention @tandem in a message to start.</p><button className="btn primary" onClick={() => reply("@tandem can you find us a cabin? like 150-200 each")}>Find a cabin for the group <Icon name="arrow"/></button></section>
       ) : null}
       <MessageList messages={messages} meId={me.id} onReply={reply} consentUrl={consentUrl} onDemoShare={demoShare} />
       <TypingIndicator key={typingSince ?? 0} since={typingSince} />

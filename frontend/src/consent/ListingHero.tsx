@@ -1,13 +1,8 @@
 import { useState } from "react";
 
-export default function ListingHero({ title, photoUrl }: { title: string; photoUrl?: string }) {
+// Shows the listing photo when there is one. Without a photo it renders nothing: the title below names the listing.
+export default function ListingHero({ photoUrl }: { photoUrl?: string }) {
   const [failed, setFailed] = useState(false);
-  if (photoUrl && !failed) {
-    return <img className="listing-photo" src={photoUrl} alt="" onError={() => setFailed(true)} />;
-  }
-  return (
-    <div className="listing-photo listing-fallback" aria-hidden="true">
-      <span>{title.slice(0, 1).toUpperCase()}</span>
-    </div>
-  );
+  if (!photoUrl || failed) return null;
+  return <img className="listing-photo" src={photoUrl} alt="" onError={() => setFailed(true)} />;
 }

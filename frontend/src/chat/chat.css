@@ -158,3 +158,12 @@
 .link-chip.kind-g, .link-chip.kind-chat { background: var(--surface); color: var(--tandem-600) !important; border: 1px solid var(--tandem-100); }
 .msg.private .bubble { border-color: var(--tandem-100); }
 .tone-pending .avatar-glyph { color: var(--pending-700); }
+
+/* simplified header and empty state */
+.chat-header{padding:20px 0 14px}.chat-header h1{font-size:24px}.chat-header p.muted{margin:4px 0 0}
+.switcher{display:flex;align-items:center;gap:8px}.switcher>span{white-space:nowrap}
+.chat-welcome{padding:36px 0 20px;text-align:left;display:grid;gap:10px;justify-items:start}
+.chat-welcome h2{font-size:24px;letter-spacing:-.6px;margin:0}.chat-welcome p{margin:0;color:var(--ink-600)}
+@media(max-width:700px){.chat-header{padding:14px 0 10px;gap:10px;flex-wrap:nowrap;align-items:center}.chat-header h1{font-size:20px}
+  .chat-header .switcher{width:auto;display:flex}.chat-header .switcher>span{display:none}.chat-header .switcher select{width:auto;min-width:0}
+  .chat-welcome{padding:24px 0 12px}.chat-welcome h2{font-size:21px}}

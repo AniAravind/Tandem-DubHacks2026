@@ -11,7 +11,7 @@ export default function ShareSummary({ data }: { data: ConsentPayload }) {
       <div className="seat-bar" aria-hidden="true">
         {Array.from({ length: Math.min(split, 12) }, (_, i) => <span key={i} className={i === 0 ? "mine" : ""} />)}
       </div>
-      <p className="hold-note">A hold today. A charge only when everyone&apos;s in.</p>
+      <p className="hold-note">A hold, not a charge, until everyone&apos;s in.</p>
     </section>
   );
 }
