@@ -13,12 +13,60 @@ def current_options(group, session):
     return [o for o in options if not brief or o['meta'].get('brief_revision') == brief.get('revision')]
 
 
+def current_live_offers(group, session):
+    from purchases import live
+    brief = session.planning_state
+    return live.latest(group, brief.get('revision') if brief else None)
+
+
+_COMPARE = re.compile(r'(?:please\s+)?compare\s+(?:options?\s+)?(.+)', re.I)
+_LETTER = re.compile(r'(?:(?:option|pick|choose|select|go with|let[’\']s do|i want|i choose)\s+)?([A-Ea-e])', re.I)
+
+
+def _compare(orchestrator, actor, text, options, offers):
+    refs = re.findall(r'\b(\d|[A-Ea-e])\b', text)
+    if len(refs) < 2:
+        return None
+    ids, labels = [], []
+    for ref in refs:
+        if ref.isdigit():
+            match = next((o for o in options if o['rank'] == int(ref)), None)
+            if match is None:
+                return [AgentMessage(text=f'{ref} isn’t on your current shortlist.')]
+            ids.append(match['id'])
+        else:
+            labels.append(ref.upper())
+    result = orchestrator.run_tool('compare_options', json.dumps({'option_ids': ids, 'offer_labels': labels}), actor)
+    if result.get('ok'):
+        return orchestrator.compose(None)
+    return [AgentMessage(text='I couldn’t compare those: ' + result['error']['message'])]
+
+
+def _feature_live_offer(orchestrator, actor, label, offers):
+    offer = next((o for o in offers if o.label == label), None)
+    if offer is None:
+        return [AgentMessage(text='That letter isn’t in the current web results. Pick ' + ', '.join(o.label for o in offers) + '.')]
+    result = orchestrator.run_tool('publish_buying_plan', json.dumps({'featured_offer': label}), actor)
+    if result.get('ok'):
+        return orchestrator.compose(None)
+    return [AgentMessage(text='I couldn’t make the planning page yet: ' + result['error']['message'])]
+
+
 def handle(orchestrator, actor, text):
     session = PhotonSession.objects.filter(member__group=orchestrator.group).first()
     if session is None:
         return None
     text = text.strip().rstrip('.!').strip()
     options = current_options(orchestrator.group, session)
+    offers = current_live_offers(orchestrator.group, session)
+    compare = _COMPARE.fullmatch(text)
+    if compare and (options or offers):
+        reply = _compare(orchestrator, actor, compare.group(1), options, offers)
+        if reply is not None:
+            return reply
+    letter = _LETTER.fullmatch(text)
+    if letter and offers:
+        return _feature_live_offer(orchestrator, actor, letter.group(1).upper(), offers)
     match = re.fullmatch(r'(?:(?:option|number|pick|choose|select|go with|let[’\']s do|i want|i choose)\s+)?#?(\d{1,2})', text, re.I)
     ordinal = {'first':1, 'second':2, 'third':3}
     number = int(match.group(1)) if match else ordinal.get(text.lower().replace('the ', '').replace(' one', ''))

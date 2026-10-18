@@ -48,7 +48,7 @@ def bridge(request):
         session = PhotonSession.objects.select_for_update().filter(pk=key).first()
         if session is None:
             group = Group.objects.create(name="Tandem · personal agent", channel="imessage")
-            member = Member.objects.create(group=group, display_name="Aryan", role="organizer",
+            member = Member.objects.create(group=group, display_name="Organizer", role="organizer",
                                           phone_e164_hash=hashlib.sha256(phone.encode()).hexdigest(), phone_last4=phone[-4:])
             group.organizer = member
             group.save(update_fields=["organizer"])

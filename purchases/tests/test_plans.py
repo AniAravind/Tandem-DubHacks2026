@@ -84,7 +84,8 @@ class SharedPlanTests(TestCase):
         count = 0
         def llm(messages,tools,**kwargs):
             nonlocal count
-            self.assertEqual({t['function']['name'] for t in tools},{'search_options','publish_plan','save_buying_brief','publish_buying_plan'})
+            self.assertEqual({t['function']['name'] for t in tools},{'search_options','publish_plan','save_buying_brief','publish_buying_plan',
+                                                                    'live_search','compare_options','remember_preference'})
             count += 1
             if count == 1:
                 return reply(calls=[tool_call('publish_plan',self.args)])

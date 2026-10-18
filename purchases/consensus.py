@@ -16,6 +16,7 @@ For every option o and the n people in the group:
 """
 from __future__ import annotations
 
+import re
 import statistics
 from dataclasses import dataclass, field
 
@@ -72,6 +73,27 @@ def _budget_comfort(cap: int | None, share: int) -> float:
 def _satisfaction(must_haves: set, features: set, cap: int | None, share: int) -> float:
     musts = 0.5 * len(must_haves & features) / max(1, len(must_haves))
     return musts + 0.3 * _budget_comfort(cap, share) + 0.2 * 0.0       # vibe match is 0 until vibe tags exist
+
+
+CATEGORY_ALIASES = {
+    "rental": {"rental", "stay", "lodging", "cabin", "house", "airbnb", "vacation_rental", "hotel", "trip", "travel",
+               "accommodation", "cabin_rental", "condo", "villa"},
+    "gift_bundle": {"gift", "gift_bundle", "present", "birthday_gift", "group_gift", "gift_box"},
+    "furniture": {"furniture", "couch", "sofa", "sectional", "desk", "bed", "table", "chair"},
+    "electronics": {"electronics", "console", "game_console", "tv", "television", "laptop", "headphones", "gaming"},
+    "passes": {"passes", "pass", "ski_pass", "lift_ticket", "ticket", "festival_pass", "season_pass"},
+    "flights": {"flight", "flights", "airfare", "plane_ticket"},
+}
+_ALIAS = {alias: canonical for canonical, aliases in CATEGORY_ALIASES.items() for alias in aliases}
+
+
+def canonical_category(category: str) -> str:
+    """'Gift', 'birthday gifts', 'Cabin rental' -> the catalog's own category; unknown categories pass through."""
+    key = re.sub(r"[^a-z]+", "_", category.lower()).strip("_")
+    for candidate in (key, key.rstrip("s"), key.removesuffix("es")):
+        if candidate in _ALIAS:
+            return _ALIAS[candidate]
+    return key or category
 
 
 def rank_options(members: list[Member], category: str, group_size: int, extra_must_haves=(),

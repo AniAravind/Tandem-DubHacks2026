@@ -52,6 +52,7 @@ def guard(text: str) -> str | None:
 
 _MONEY = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?")
 _PAN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+_URL = re.compile(r"https?://\S+")
 _CLAIM = re.compile(r"\b(i|i've|i have|we've|we have|done[,!.]? i)\s+(just\s+)?(booked|charged|paid|captured|refunded|raised|"
                     r"increased|changed|set|updated|lifted)\b[^.?!]{0,40}?(\b(caps?|limits?|budgets?|card|booking|room|cabin|lodge|"
                     r"everyone|you)\b|\$)", re.I)
@@ -88,14 +89,19 @@ def cents_in(value) -> set[int]:
 
 
 def filter_text(text: str, tool_cents: set[int], typed_cents: set[int], private_caps: set[int]) -> tuple[str, str | None]:
-    """(text to send, reason it was blocked or None)."""
-    if _PAN.search(text):
+    """(text to send, reason it was blocked or None). Links are checked separately: listing ids are not card numbers."""
+    prose = _URL.sub(" ", text)
+    if _PAN.search(prose):
         return "", "pan_like_digits"
-    if _CLAIM.search(text):
+    if _CLAIM.search(prose):
         return "", "money_claim"
-    for cents in amounts_in(text):
+    for cents in amounts_in(prose):
         if cents in private_caps and cents not in tool_cents:
             return "", "budget_value"
         if cents not in tool_cents and cents not in typed_cents:
             return "", "invented_amount"
     return text, None
+
+
+def urls_in(text: str) -> list[str]:
+    return [u.rstrip(".,;:!?)\"'") for u in _URL.findall(text or "")]
