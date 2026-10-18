@@ -200,7 +200,9 @@ p.quiet-empty{font-size:var(--fs-callout);color:var(--label-2)}
 .funding-panel .ring-track{stroke:rgba(255,255,255,.12)}
 .msg.mine .bubble{background:var(--green)}
 .demo-dialog{border:0;border-radius:24px;color:var(--label)}
-.demo-dialog input,.demo-dialog select{border:0;background:var(--sys-bg);border-radius:12px}
+.demo-dialog input,.demo-dialog select{border:0;background:var(--sys-bg);color:var(--label);caret-color:var(--label);border-radius:12px;color-scheme:dark}
+.demo-dialog input::placeholder{color:var(--label-3);opacity:1}
+.demo-dialog input:-webkit-autofill,.demo-dialog input:-webkit-autofill:focus{-webkit-text-fill-color:var(--label);caret-color:var(--label);box-shadow:0 0 0 1000px var(--sys-bg) inset}
 .demo-dialog .demo-primary{border-radius:999px;background:var(--green);color:#fff;border:0}
 .demo-dialog .demo-primary:hover:not(:disabled){background:var(--green-deep)}
 
