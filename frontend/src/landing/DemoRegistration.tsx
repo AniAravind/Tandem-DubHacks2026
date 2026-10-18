@@ -28,7 +28,6 @@ async function readResponse<T>(response: Response): Promise<T> {
 export default function DemoRegistration({ initialToken, onClose }: { initialToken: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [phone, setPhone] = useState("");
-  const [country, setCountry] = useState("+1");
   const [token, setToken] = useState(initialToken || rememberedTicket);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [busy, setBusy] = useState(false);
@@ -103,7 +102,11 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
     setError("");
     try {
       const raw = phone.trim();
-      const number = raw.startsWith("+") || !country ? raw : country + raw.replace(/^0/, "");
+      const digits = raw.replace(/\D/g, "");
+      if (!/^\d{10}$/.test(digits) && !/^1\d{10}$/.test(digits)) {
+        throw new Error("Enter a 10-digit US or Canadian phone number.");
+      }
+      const number = digits.length === 11 ? `+${digits}` : `+1${digits}`;
       const response = await fetch("/api/v1/demo/registrations", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: number }),
         signal: AbortSignal.timeout(30000),
@@ -135,19 +138,11 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
       {!token ? <>
         <p>Connect the number you’ll text from, then meet tandem in iMessage.</p>
         <form onSubmit={register}>
-          <label htmlFor="demo-country">Country / calling code</label>
-          <select id="demo-country" value={country} onChange={event => setCountry(event.target.value)}>
-            <option value="+1">United States / Canada (+1)</option>
-            <option value="+44">United Kingdom (+44)</option>
-            <option value="+61">Australia (+61)</option>
-            <option value="+91">India (+91)</option>
-            <option value="">Other — include +country code</option>
-          </select>
           <label htmlFor="demo-phone">Your phone number</label>
           <input id="demo-phone" type="tel" autoComplete="tel-national" inputMode="tel" maxLength={32} required
-            placeholder={country === "+1" ? "(206) 555-0123" : country ? "Your number" : "+country code and number"}
+            placeholder="(206) 555-0123"
             value={phone} onChange={event => setPhone(event.target.value)} aria-describedby="demo-phone-note" />
-          <small id="demo-phone-note">Use your iMessage number. We’ll connect it through Photon. You send the first text.</small>
+          <small id="demo-phone-note">US and Canada (+1). Use your iMessage number. You send the first text.</small>
           <button className="btn primary demo-primary" disabled={busy || !phone.trim()}>{busy ? "Connecting…" : "Connect my number"}<span aria-hidden="true">↗</span></button>
         </form>
       </> : <>
