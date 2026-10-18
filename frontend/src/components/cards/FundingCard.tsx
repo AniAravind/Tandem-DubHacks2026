@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { usd } from "../../api/client";
 import type { FundingCardData } from "../../types/contracts";
 import { countdown, when } from "../../chat/format";
@@ -53,7 +54,9 @@ export function FundingCard({ data, consentUrl, meId, onDemoShare }: CardProps<F
           <button className="btn primary" onClick={() => onDemoShare("hold")}>Hold my share</button>
           <button className="btn" onClick={() => onDemoShare("decline")}>Not for me</button>
         </div>
-      ) : myTurn && consentUrl ? <a className="btn primary" href={consentUrl}>Hold my share →</a> : null}
+      ) : myTurn && consentUrl ? (
+        <Link className="btn primary" to={consentUrl}>{mine?.status === "card_failed" ? "Try another card →" : "Review & hold my share →"}</Link>
+      ) : null}
     </article>
   );
 }

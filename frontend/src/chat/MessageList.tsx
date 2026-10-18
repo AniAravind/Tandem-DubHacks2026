@@ -1,15 +1,26 @@
 import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { plainText } from "../../../shared/message-text.mjs";
 import tandemMark from "../assets/tandem-mark.png";
 import { CardView } from "../components/cards";
 import type { ChatMessage } from "./types";
 
-// Turn "/c/abc" and "https://..." into links; everything else stays plain text.
+const IN_APP = /^(?:https?:\/\/[^/\s]+)?(\/(c|g|p|chat)\/[^\s]+?)([.,!?)]*)$/;
+const LINK_LABELS: Record<string, string> = {
+  c: "Review & approve my share", p: "Open the shared plan", g: "Open group overview", chat: "Open group chat",
+};
+
+// In-app links ("/c/abc", "https://host/p/123") become action links; other URLs stay plain links.
 function linkify(text: string): ReactNode[] {
-  return text.split(/(\s+)/).map((part, i) =>
-    /^(https?:\/\/\S+|\/(c|g|p|chat)\/\S+)$/.test(part)
-      ? <a key={i} href={part} title={part}>{/\/c\//.test(part) ? "Open private consent page →" : "Open link ↗"}</a>
-      : <Fragment key={i}>{part}</Fragment>);
+  return text.split(/(\s+)/).map((part, i) => {
+    const app = part.match(IN_APP);
+    if (app && (part.startsWith("/") || part.includes(window.location.host))) {
+      return <Fragment key={i}><Link className={`link-chip kind-${app[2]}`} to={app[1]} title={app[1]}>{LINK_LABELS[app[2]]} <span aria-hidden="true">→</span></Link>{app[3]}</Fragment>;
+    }
+    return /^https?:\/\/\S+$/.test(part)
+      ? <a key={i} href={part} title={part} rel="noreferrer">Open link ↗</a>
+      : <Fragment key={i}>{part}</Fragment>;
+  });
 }
 
 function MessageBody({text}: {text:string}) {

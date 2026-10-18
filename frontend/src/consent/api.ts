@@ -28,10 +28,21 @@ export type ConsentPayload = {
   share_id: string;
   group_id: string;
   share_status: string;
-  reconfirmation?: {from_cents: number; to_cents: number; available: boolean} | null;
+  purchase_state?: string;
+  group_counts?: { held: number; active: number };
+  attempts_left?: number;
+  above_budget?: boolean;
+  reconfirmation?: {
+    from_cents: number; to_cents: number; available: boolean;
+    cap_cents?: number | null; within_cap?: boolean;
+  } | null;
 };
 
-export type ApiError = { error: { code: string; message: string; decline_code?: string } };
+export type ApiError = { error: { code: string; message: string; decline_code?: string; attempts_left?: number } };
+
+export type ConsentRequestError = Error & {
+  status?: number; code?: string; decline_code?: string; attempts_left?: number;
+};
 
 export type Assertion = {
   method: "otp" | "passkey";
@@ -54,7 +65,8 @@ async function req(path: string, init: RequestInit = {}, memberId?: string) {
       status: res.status,
       code: err.error?.code,
       decline_code: err.error?.decline_code,
-    });
+      attempts_left: err.error?.attempts_left,
+    }) as ConsentRequestError;
   }
   return data;
 }

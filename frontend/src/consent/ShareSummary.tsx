@@ -3,12 +3,21 @@ import type { ConsentPayload } from "./api";
 
 export default function ShareSummary({ data }: { data: ConsentPayload }) {
   const offer = offerCents(data.offers, data.share_cents);
+  const split = data.purchase.split_count;
   return (
-    <section className="consent-card share-summary">
+    <section className="share-summary" aria-label="Your share">
       <p className="kicker">Your share</p>
       <p className="share-amount money">{formatUsd(data.share_cents)}</p>
-      <p className="muted">(of {formatUsd(data.purchase.total_cents, false)})</p>
-      <p>Split {data.purchase.split_count} ways{offer ? ` · ${formatUsd(offer)} offer (simulated)` : " · Nobody fronts the total"}</p><span className="hold-note">A hold today. A charge only when everyone’s in.</span>
+      <p className="share-meta">of {formatUsd(data.purchase.total_cents)} · split {split} {split === 1 ? "way" : "ways"}</p>
+      <div className="seat-bar" aria-hidden="true">
+        {Array.from({ length: Math.min(split, 12) }, (_, i) => <span key={i} className={i === 0 ? "mine" : ""} />)}
+      </div>
+      {offer > 0 && data.offers[0] && (
+        <p className="offer-chip">
+          <span aria-hidden="true">★</span> Card-linked offer: {formatUsd(offer)} back <span className="muted">(simulated)</span>
+        </p>
+      )}
+      <p className="hold-note">A hold today. A charge only when everyone&apos;s in.</p>
     </section>
   );
 }

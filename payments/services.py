@@ -97,6 +97,17 @@ def assert_not_pan(raw: str) -> None:
         raise ConsentError("pan_not_allowed", "Card numbers are not allowed. Use the tokenized test field.", 400)
 
 
+def default_cap_cents(share: Share) -> int:
+    """The highest limit this page may offer. A share raised above the private budget needs a new, explicit limit."""
+    return max(share.member.budget_cap_cents or 0, share.amount_cents)
+
+
+RULE_ERROR_STATUS = {
+    "too_many_declines": 429, "rate_limited": 429, "deadline_passed": 410, "share_superseded": 410,
+    "illegal_state": 409, "consent_mismatch": 409, "token_inactive": 409, "not_a_member": 403,
+}
+
+
 class ConsentService:
     def get_payload(self, token: str, header_member_id: str | None = None, cap_cents=None) -> dict:
         share = read_consent_token(token, header_member_id)["share"]
@@ -113,7 +124,7 @@ class ConsentService:
         share = Share.objects.select_for_update().get(pk=share.pk)
         purchase = share.purchase
         option = purchase.option
-        cap = share.member.budget_cap_cents or share.amount_cents
+        cap = default_cap_cents(share)
         scope = {
             "purpose": "group_purchase",
             "purchase_id": str(purchase.id),
@@ -146,7 +157,7 @@ class ConsentService:
                 header_member_id: str | None = None) -> dict:
         share = read_consent_token(token, header_member_id)["share"]
         purchase = share.purchase
-        default_cap = share.member.budget_cap_cents or share.amount_cents
+        default_cap = default_cap_cents(share)
         expected = self._payload(share, cap_cents)["consent_text_sha256"]
         if consent_text_sha256 != expected:
             raise ConsentError("consent_text_changed", "The consent text changed. Refresh and try again.", 409)
@@ -159,6 +170,10 @@ class ConsentService:
             raise ConsentError("rate_limited", "Try again later or leave.", 429)
         if share.card_attempts >= MAX_CARD_DECLINES:
             raise ConsentError("too_many_declines", "Try again later or leave.", 429)
+        agent_token = AgentToken.objects.filter(
+            gateway_token_id=agent_token_id, member=share.member, status="active").first()
+        if agent_token is None:
+            raise ConsentError("token_inactive", "The payment token is missing, revoked, or expired. Re-enter your card.", 409)
         method = self._verify_assertion(share, assertion)
         consent = Consent.objects.create(
             member=share.member, share=share, consent_text_version=VERSION, consent_text_sha256=expected,
@@ -168,20 +183,19 @@ class ConsentService:
         log_event(EventType.CONSENT_ACCEPTED, actor=f"member:{share.member_id}",
                   group_id=purchase.group_id, purchase_id=purchase.id,
                   payload={"share_id": str(share.id), "method": method, "amount_cents": share.amount_cents})
-        agent_token = AgentToken.objects.filter(
-            gateway_token_id=agent_token_id, member=share.member, status="active").first()
-        if agent_token is None:
-            raise ConsentError("token_inactive", "The payment token is missing, revoked, or expired.")
         from purchases.rules import place_hold
         result = place_hold(share.id, consent.id, agent_token.id, int(cap_cents))
         if "error" in result:
-            raise ConsentError(result["error"]["code"], result["error"]["message"], 400)
+            code = result["error"]["code"]
+            raise ConsentError(code, result["error"]["message"], RULE_ERROR_STATUS.get(code, 400))
         hold = result.get("hold") or {}
         status = str(hold.get("status") or "").upper()
         if result.get("share_status") == "card_failed" or status == "DECLINED":
+            share.refresh_from_db(fields=["card_attempts"])
             raise ConsentError(
                 "card_declined", "Your bank didn't approve this hold. Nothing was charged.", 402,
-                extra={"decline_code": hold.get("decline_code") or "do_not_honor"})
+                extra={"decline_code": hold.get("decline_code") or "do_not_honor",
+                       "attempts_left": max(0, MAX_CARD_DECLINES - share.card_attempts)})
         hold_out = {
             "hold_id": hold.get("hold_id"),
             "amount_cents": hold.get("amount_cents", share.amount_cents),
@@ -260,7 +274,7 @@ class ConsentService:
             dates = f"{dates.get('start', '')} to {dates.get('end', '')}"
         dates = dates or " to ".join(filter(None, [option.meta.get("check_in"), option.meta.get("check_out")]))
         deadline_label = format_deadline(purchase.deadline_at, group.timezone)
-        default_cap = share.member.budget_cap_cents or share.amount_cents
+        default_cap = default_cap_cents(share)
         selected_cap = default_cap
         if cap_cents is not None:
             try:
@@ -276,12 +290,16 @@ class ConsentService:
             title=option.title, merchant_name=merchant_name, deadline_label=deadline_label)
         split_count = purchase.shares.filter(superseded_by__isnull=True).count()
         offers = get_gateway().list_offers("", option.merchant_slug).get("offers") or []
-        previous = Share.objects.filter(superseded_by=share, member=share.member).first()
+        previous = Share.objects.filter(superseded_by=share, member=share.member).exclude(pk=share.pk).first()
         from purchases import rules
         reconfirmation = None
         if previous:
+            approved = previous.consents.order_by("-accepted_at").first()
             reconfirmation = {"from_cents": previous.amount_cents, "to_cents": share.amount_cents,
-                              "available": hasattr(rules, "apply_share_change")}
+                              "available": hasattr(rules, "apply_share_change"),
+                              "cap_cents": approved.cap_cents if approved else None,
+                              "within_cap": bool(approved and share.amount_cents <= approved.cap_cents)}
+        budget = share.member.budget_cap_cents
         from purchases.models import TripPlan
         plan = TripPlan.objects.filter(group=group).first()
         return {
@@ -309,4 +327,13 @@ class ConsentService:
             "share_id": str(share.id),
             "group_id": str(group.id),
             "share_status": share.status,
+            "purchase_state": purchase.state,
+            "group_counts": self._group_counts(purchase),
+            "attempts_left": max(0, MAX_CARD_DECLINES - share.card_attempts),
+            "above_budget": bool(budget and share.amount_cents > budget),
         }
+
+    @staticmethod
+    def _group_counts(purchase) -> dict:
+        live = purchase.shares.filter(superseded_by__isnull=True).exclude(status__in=[S.DECLINED, S.RELEASED])
+        return {"held": live.filter(status__in=[S.HELD, S.CAPTURED]).count(), "active": live.count()}

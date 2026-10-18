@@ -1,18 +1,18 @@
 export default function CanCanNever({ can, canNever }: { can: string[]; canNever: string[] }) {
   return (
-    <>
-      <section className="consent-card">
-        <p className="kicker">Tandem CAN</p>
-        <ul className="consent-list">
-          {can.map((line) => <li key={line}>{line}</li>)}
+    <div className="promise-grid">
+      <section className="promise can" aria-labelledby="can-title">
+        <p className="kicker" id="can-title">Tandem can</p>
+        <ul>
+          {can.map((line) => <li key={line}><span className="promise-mark" aria-hidden="true">✓</span>{line}</li>)}
         </ul>
       </section>
-      <section className="consent-card">
-        <p className="kicker">Tandem can NEVER</p>
-        <ul className="consent-list">
-          {canNever.map((line) => <li key={line}>{line}</li>)}
+      <section className="promise never" aria-labelledby="never-title">
+        <p className="kicker" id="never-title">Tandem can never</p>
+        <ul>
+          {canNever.map((line) => <li key={line}><span className="promise-mark" aria-hidden="true">✕</span>{line}</li>)}
         </ul>
       </section>
-    </>
+    </div>
   );
 }

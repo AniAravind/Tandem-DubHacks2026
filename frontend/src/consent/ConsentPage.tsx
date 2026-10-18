@@ -1,16 +1,17 @@
-import { useEffect, useId, useState, useRef, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import CanCanNever from "./CanCanNever";
 import DeclineSheet from "./DeclineSheet";
-import ExpiredLink from "./ExpiredLink";
 import HeldSuccess from "./HeldSuccess";
+import ListingHero from "./ListingHero";
 import MandateBox from "./MandateBox";
 import PasskeyConfirm from "./PasskeyConfirm";
-import ReconfirmSheet from "./ReconfirmSheet";
+import { requestPasskey } from "./passkey";
+import ReconfirmPanel from "./ReconfirmPanel";
 import SecureCardField from "./SecureCardField";
 import ShareSummary from "./ShareSummary";
+import StatusScreen, { type NextLink } from "./StatusScreen";
 import {
-  DEMO_OTP,
   approve,
   declineConsent,
   getConsent,
@@ -19,13 +20,41 @@ import {
   tokenize,
   type Assertion,
   type ConsentPayload,
+  type ConsentRequestError,
 } from "./api";
 import { formatUsd, last4FromPan } from "./money";
-import { Link } from "react-router-dom";
 import { Mark, Icon } from "../components/layout/AppShell";
 import "./consent.css";
 
-type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden" | "captured" | "released" | "refunded";
+type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden" | "locked" | "captured" | "released" | "refunded";
+type Action = "approve" | "reconfirm";
+
+const POLL_MS = 3000;
+const GONE = new Set(["link_expired", "link_superseded", "deadline_passed", "share_superseded"]);
+const LOCKED = new Set(["too_many_declines", "rate_limited"]);
+
+function screenFor(p: ConsentPayload): Screen {
+  switch (p.share_status) {
+    case "held": case "captured": case "released": case "refunded": case "declined":
+      return p.share_status;
+    case "card_failed":
+      return p.attempts_left === 0 ? "locked" : "form";
+    default:
+      return "form";
+  }
+}
+
+function nextLinks(d: ConsentPayload | null): NextLink[] {
+  if (!d) return [];
+  return [
+    d.plan_url ? { to: d.plan_url, label: "Back to your plan" } : { to: `/chat/${d.group_id}`, label: "Back to group chat" },
+    { to: `/g/${d.group_id}`, label: "View group overview" },
+  ];
+}
+
+function triesLeft(n: number | undefined): string {
+  return n == null ? "" : ` ${n} ${n === 1 ? "try" : "tries"} left.`;
+}
 
 export default function ConsentPage() {
   const { token = "" } = useParams();
@@ -35,185 +64,288 @@ export default function ConsentPage() {
   const [pan, setPan] = useState("4111111111111111");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [last4, setLast4] = useState("1111");
-  const [showDecline, setShowDecline] = useState(false);
-  const [showReconfirm, setShowReconfirm] = useState(false);
-  const [needOtp, setNeedOtp] = useState(false);
-  const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState("");
+  const [last4, setLast4] = useState("");
+  const [confirming, setConfirming] = useState<Action | null>(null);
+  const [declining, setDeclining] = useState(false);
   const errorId = useId();
-  const cardToken = useRef<{last4: string; transient: string; id?: string} | null>(null);
+  const cardToken = useRef<{ last4: string; transient: string; id?: string } | null>(null);
+  const passkeyUnavailable = useRef(false);
+  const passkeyAbort = useRef<AbortController | null>(null);
+  const [verifying, setVerifying] = useState(false);
+
   const applyStatus = useCallback((payload: ConsentPayload) => {
     setData(payload);
-    const status = payload.share_status;
-    setScreen(status === "held" ? "held" : status === "captured" ? "captured" : status === "released" ? "released" : status === "refunded" ? "refunded" : status === "declined" ? "declined" : "form");
+    setScreen(screenFor(payload));
   }, []);
-  const refresh = useCallback(async () => { applyStatus(await getConsent(token)); }, [token, applyStatus]);
-  useEffect(() => {
-    if (screen !== "held") return;
-    const timer = setInterval(() => { refresh().catch(() => undefined); }, 2000);
-    return () => clearInterval(timer);
-  }, [screen, token, refresh]);
+
+  const showGone = useCallback((err: ConsentRequestError) => {
+    setNotice(err.code === "link_superseded" || err.code === "share_superseded"
+      ? "The plan changed, so this link was replaced. Open the newest private link Tandem sent you to confirm your updated share."
+      : err.message || "This link expired. Ask Tandem in your chat for a new one.");
+    setScreen("expired");
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      applyStatus(await getConsent(token));
+    } catch (err) {
+      const e = err as ConsentRequestError;
+      if (e.code && GONE.has(e.code)) showGone(e);
+      else throw e;
+    }
+  }, [token, applyStatus, showGone]);
 
   useEffect(() => {
     let alive = true;
     getConsent(token)
       .then((payload) => {
         if (!alive) return;
-        setData(payload);
         setCap(payload.default_cap_cents);
         applyStatus(payload);
       })
-      .catch((err: { status?: number; message?: string }) => {
+      .catch((err: ConsentRequestError) => {
         if (!alive) return;
-        setMessage(err.message || "");
-        setScreen(err.status === 403 ? "forbidden" : "expired");
+        if (err.status === 403) setScreen("forbidden");
+        else showGone(err);
       });
     return () => { alive = false; };
-  }, [token, applyStatus]);
+  }, [token, applyStatus, showGone]);
 
-  async function place(assertion: Assertion) {
+  useEffect(() => {
+    if (screen !== "held") return;
+    const timer = setInterval(() => { refresh().catch(() => undefined); }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [screen, refresh]);
+
+  function fail(message: string) {
+    setError(message);
+    requestAnimationFrame(() => document.getElementById(errorId)?.focus());
+  }
+
+  async function handleError(err: unknown) {
+    const e = err as ConsentRequestError;
+    const code = e.code ?? "";
+    if (GONE.has(code)) return showGone(e);
+    if (LOCKED.has(code)) { setNotice(e.message); setScreen("locked"); return; }
+    if (code === "card_declined") {
+      setConfirming(null);
+      setData((d) => d && { ...d, share_status: "card_failed", attempts_left: e.attempts_left ?? d.attempts_left });
+      if (e.attempts_left === 0) { setNotice("Your card was declined 3 times, so new attempts on this share are paused."); setScreen("locked"); return; }
+      return fail(`${e.message} Try a different card.${triesLeft(e.attempts_left)}`);
+    }
+    if (code === "token_inactive") cardToken.current = null;
+    if (code === "consent_text_changed" || code === "illegal_state") {
+      setConfirming(null);
+      await refresh().catch(() => undefined);
+      return fail(code === "consent_text_changed" ? "Some details changed. Review them and approve again." : e.message);
+    }
+    if (code !== "otp_invalid") setConfirming(null);
+    fail(e.message || "Something went wrong. Nothing was charged.");
+  }
+
+  async function placeHold(assertion: Assertion) {
+    const digits = pan.replace(/\D/g, "");
+    const cardLast4 = last4FromPan(digits);
+    if (!cardToken.current || cardToken.current.last4 !== cardLast4) {
+      cardToken.current = { last4: cardLast4, transient: crypto.randomUUID().replaceAll("-", "") };
+    }
+    const attempt = cardToken.current;
+    if (!attempt.id) {
+      const tok = await tokenize(token, cardLast4, attempt.transient);
+      attempt.id = tok.agent_token_id;
+    }
+    setLast4(attempt.last4);
+    const rendered = await getConsent(token, cap);
+    await approve(token, { agent_token_id: attempt.id, cap_cents: cap, consent_text_sha256: rendered.consent_text_sha256, assertion });
+  }
+
+  async function run(action: Action, assertion: Assertion) {
     if (!data) return;
     setBusy(true);
     setError("");
     try {
-      const digits = pan.replace(/\D/g, "");
-      const cardLast4 = last4FromPan(digits);
-      if (!cardToken.current || cardToken.current.last4 !== cardLast4) cardToken.current = {last4: cardLast4, transient: crypto.randomUUID().replaceAll("-", "")};
-      const attempt = cardToken.current;
-      if (!attempt.id) {
-        const tok = await tokenize(token, cardLast4, attempt.transient);
-        attempt.id = tok.agent_token_id;
-        setLast4(tok.card.last4);
-      }
-      const rendered = await getConsent(token, cap);
-      await approve(token, {
-        agent_token_id: attempt.id!,
-        cap_cents: cap,
-        consent_text_sha256: rendered.consent_text_sha256,
-        assertion,
-      });
+      if (action === "approve") await placeHold(assertion);
+      else await reconfirmShare(data.share_id, data.member.id, assertion);
+      setConfirming(null);
       if (navigator.vibrate) navigator.vibrate(10);
       await refresh();
-    } catch (err: unknown) {
-      const e = err as { code?: string; message?: string };
-      setError(e.message || "Something went wrong. Nothing was charged.");
-      document.getElementById(errorId)?.focus();
+    } catch (err) {
+      await handleError(err);
     } finally {
       setBusy(false);
     }
   }
 
-  async function startApprove() {
-    try {
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: "Tandem", id: window.location.hostname },
-          user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "tandem", displayName: data?.member.display_name || "member" },
-          pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-          timeout: 15000,
-        },
-      });
-      if (!cred) throw new Error("cancelled");
-      await place({ method: "passkey", credential_id: cred.id, client_data_json: "demo", signature: "demo-passkey" });
-    } catch {
-      setNeedOtp(true);
+  async function start(action: Action) {
+    if (!data) return;
+    if (action === "approve" && pan.replace(/\D/g, "").length !== 16) return fail("Enter the full 16-digit test card number.");
+    setError("");
+    if (!passkeyUnavailable.current) {
+      const abort = new AbortController();
+      passkeyAbort.current = abort;
+      setVerifying(true);
+      const assertion = await requestPasskey(data.member.display_name, abort.signal);
+      if (passkeyAbort.current !== abort) return;
+      setVerifying(false);
+      passkeyAbort.current = null;
+      if (assertion) return run(action, assertion);
+      passkeyUnavailable.current = true;
     }
+    setConfirming(action);
+  }
+
+  function switchToCode(action: Action) {
+    passkeyAbort.current?.abort();
+    passkeyAbort.current = null;
+    passkeyUnavailable.current = true;
+    setVerifying(false);
+    setConfirming(action);
   }
 
   async function onDecline(reason: string) {
-    setShowDecline(false);
-    try { await declineConsent(token, reason); setScreen("declined"); } catch (err) { setError(err instanceof Error ? err.message : "Couldn’t update your choice. Try again."); }
+    await declineConsent(token, reason);
+    setDeclining(false);
+    await refresh();
   }
+
+  async function onLeave() {
+    if (!data) return;
+    await leaveShare(data.share_id, data.member.id);
+    await refresh();
+  }
+
+  const links = nextLinks(data);
+  const change = data?.reconfirmation;
+  const quickConfirm = Boolean(change?.within_cap && change.available);
+  const action: Action = quickConfirm ? "reconfirm" : "approve";
+  const actionLabel = data ? (quickConfirm ? `Confirm ${formatUsd(data.share_cents)}` : `Approve & hold ${formatUsd(data.share_cents)}`) : "";
 
   return (
     <main className="consent-page">
       <header className="consent-header">
-        <Link to="/" className="brand"><Mark/><span>tandem<span className="brand-period">.</span></span></Link>
+        <Link to="/" className="brand"><Mark /><span>tandem<span className="brand-period">.</span></span></Link>
         <span className="sim-badge">SIMULATED PAYMENT</span>
       </header>
 
       {screen === "loading" && (
-        <div aria-busy="true">
-          <div className="skeleton" />
-          <div className="skeleton" />
-          <div className="skeleton" />
+        <div className="consent-skeleton" aria-busy="true" aria-label="Loading your share">
+          <div /><div /><div />
         </div>
       )}
 
-      {screen === "expired" && <ExpiredLink message={message} />}
+      {screen === "expired" && (
+        <StatusScreen tone="pending" eyebrow="LINK NO LONGER ACTIVE" title="This link expired" links={links}>
+          <p className="status-lede">{notice}</p>
+          <p className="fine">Nothing was held or charged through this link.</p>
+        </StatusScreen>
+      )}
       {screen === "forbidden" && (
-        <section className="consent-card">
-          <h1>This link isn&apos;t for you</h1>
-          <p>Links are personal.</p>
-        </section>
+        <StatusScreen tone="ink" eyebrow="PRIVATE LINK" title="This link isn’t for you">
+          <p className="status-lede">Links are personal. Open the one Tandem sent to you privately.</p>
+        </StatusScreen>
+      )}
+      {screen === "locked" && (
+        <StatusScreen tone="decline" eyebrow="HOLD PAUSED" title="We couldn’t place your hold" links={links}>
+          <p className="status-lede">{notice || "Too many attempts on this share."} Nothing was charged.</p>
+          <p className="fine">You can still say no, so the group can keep the plan moving without you.</p>
+          <button className="btn" type="button" onClick={() => setDeclining(true)}>Not for me</button>
+        </StatusScreen>
       )}
       {screen === "declined" && (
-        <section className="consent-card">
-          <h1>No problem. Nothing was held.</h1>
-          <p className="muted">The group only sees that a spot opened up.</p>
-        </section>
+        <StatusScreen tone="ink" eyebrow="YOU'RE OUT" title="No problem. Nothing is held." links={links}>
+          <p className="status-lede">{change ? "Your earlier hold was released too. " : ""}Your reason stays private. The group only sees that a spot opened up.</p>
+        </StatusScreen>
       )}
-      {(["captured", "released", "refunded"] as Screen[]).includes(screen) && <section className="consent-card"><h1>{screen === "captured" ? "Paid — booking confirmed." : screen === "refunded" ? "Your share was refunded." : "Hold released."}</h1><p>Simulated payment: no real money moves.</p></section>}
-      {screen === "held" && data && (
-        <HeldSuccess shareCents={data.share_cents} last4={last4} splitCount={data.purchase.split_count} groupId={data.group_id} onLeave={async () => { await leaveShare(data.share_id, data.member.id); await refresh(); }} />
+      {screen === "released" && data && (
+        <StatusScreen tone="ink" eyebrow="HOLD RELEASED" title="Your hold was released" links={links}>
+          <p className="status-lede">
+            {["failed", "released"].includes(data.purchase_state ?? "")
+              ? "Not everyone was in before the deadline, so every hold was released."
+              : "You left this purchase."} Nothing was charged.
+          </p>
+        </StatusScreen>
       )}
+      {screen === "captured" && data && (
+        <StatusScreen tone="funded" eyebrow="BOOKED TOGETHER" title="Paid. Booking confirmed." links={links}>
+          <p className="status-lede"><strong className="money">{formatUsd(data.share_cents)}</strong>, your exact share of {data.purchase.title}, was captured after the signed checkout succeeded.</p>
+          <p className="fine">Simulated payment: no real money moves in this demo.</p>
+        </StatusScreen>
+      )}
+      {screen === "refunded" && data && (
+        <StatusScreen tone="funded" eyebrow="REFUNDED" title="Your share was refunded" links={links}>
+          <p className="status-lede">The booking was cancelled and your share went back to your card.</p>
+          <p className="fine">Simulated payment: no real money moves in this demo.</p>
+        </StatusScreen>
+      )}
+      {screen === "held" && data && <HeldSuccess data={data} last4={last4} links={links} onLeave={onLeave} />}
 
       {screen === "form" && data && (
-        <div className="consent-form-grid"><section className="consent-details">
-          <p className="eyebrow">YOUR PLAN. YOUR PERMISSION.</p><h1>A great trip starts<br/>with everyone in.</h1>
-          <p className="consent-invitation">Hi {data.member.display_name}. {data.invited_by === data.member.display_name ? "You’re organizing" : `${data.invited_by} invited you to`} <strong>{data.group_name}</strong>.</p>
-          <div className="mobile-share-summary"><ShareSummary data={data}/></div>
-          {data.purchase.photo_url && (
-            <img className="listing-photo" src={data.purchase.photo_url} alt="" onError={e=>{e.currentTarget.style.display="none";}} />
-          )}
-          <h2 className="consent-listing-title">{data.purchase.title}</h2>
-          <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")}</p>
-          <p className="muted">Simulated payment: no real money moves in this demo. Use test cards.</p>
-          <CanCanNever can={data.can} canNever={data.can_never} /><div className="consent-trust"><Icon name="shield"/><span>Your consent belongs to you. You can leave before booking.</span></div></section><section className="consent-review" aria-label="Review and approve your share"><ShareSummary data={data} />
-          {data.offers[0] && (
-            <p>Offer applied: −{formatUsd(Math.round((data.share_cents * data.offers[0].percent_back) / 100))} (simulated)</p>
-          )}
-          <MandateBox data={data} cap={cap} onCap={(value) => { setCap(value); getConsent(token, value).then(setData).catch(() => undefined); }} />
-          <SecureCardField pan={pan} onPan={setPan} errorId={error ? errorId : undefined} />
-          {error && (
-            <p className="error" id={errorId} tabIndex={-1} role="alert">
-              {error} Try another card?
-            </p>
-          )}
-          <div className="consent-actions">
-            <button className="btn consent-approve" type="button" disabled={busy} onClick={startApprove}>
-              {busy ? "Placing hold…" : `Approve & hold ${formatUsd(data.share_cents)}`}
-            </button>
-            {needOtp && <PasskeyConfirm busy={busy} onAssert={place} />}
-            <button className="btn" type="button" disabled={busy} onClick={() => setShowDecline(true)}>Not for me</button>
-            <p className="muted">Leave anytime before booking.</p>
-            {data.reconfirmation?.available ? <button className="btn" type="button" onClick={() => setShowReconfirm(true)}>Review changed share</button> : data.reconfirmation ? <p className="muted">Your updated share isn’t ready to confirm yet. Please check back shortly.</p> : null}
-          </div></section></div>
+        <div className="consent-form-grid">
+          <div className="consent-col">
+            <section className="consent-intro" aria-labelledby="consent-title">
+              <p className="eyebrow">PRIVATE TO YOU · YOUR PERMISSION</p>
+              <h1 id="consent-title">Hi {data.member.display_name}. Approve only your share.</h1>
+              <p className="consent-invitation">
+                {data.invited_by && data.invited_by !== data.member.display_name ? `${data.invited_by} invited you to ` : "You’re organizing "}
+                <strong>{data.group_name}</strong>. Nobody fronts the total, and nobody is charged unless everyone is in.
+              </p>
+              <ListingHero title={data.purchase.title} photoUrl={data.purchase.photo_url} />
+              <h2 className="consent-listing-title">{data.purchase.title}</h2>
+              <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")} · Demo data</p>
+            </section>
+            <section className="consent-promises" aria-label="What Tandem can and can never do">
+              <CanCanNever can={data.can} canNever={data.can_never} />
+              <div className="consent-trust"><Icon name="shield" /><span>Your consent belongs to you. Leave anytime before booking and your hold is released.</span></div>
+            </section>
+          </div>
+
+          <div className="consent-col consent-review">
+            <section className="consent-terms" aria-label="Review your share">
+              {change && <ReconfirmPanel change={change} />}
+              {data.share_status === "card_failed" && !error && (
+                <p className="notice decline" role="status">
+                  Your last card wasn’t approved. Nothing was charged. Try a different card.{triesLeft(data.attempts_left)}
+                </p>
+              )}
+              <ShareSummary data={data} />
+              {!quickConfirm && (
+                <MandateBox data={data} cap={cap} onCap={(value) => { setCap(value); getConsent(token, value).then(setData).catch(() => undefined); }} />
+              )}
+            </section>
+            <section className="consent-pay" aria-label="Approve or decline">
+              {!quickConfirm && (
+                <SecureCardField
+                  pan={pan}
+                  disabled={busy || verifying || confirming !== null}
+                  onPan={(value) => { setPan(value); setError(""); }}
+                  errorId={error ? errorId : undefined}
+                />
+              )}
+              {error && <p className="error" id={errorId} tabIndex={-1} role="alert">{error}</p>}
+              <div className="consent-actions">
+                {confirming ? (
+                  <PasskeyConfirm busy={busy} submitLabel={actionLabel} onAssert={(a) => run(confirming, a)} onCancel={() => { setConfirming(null); setError(""); }} />
+                ) : (
+                  <div className="choice-row">
+                    <button className="btn consent-choice" type="button" disabled={busy || verifying} onClick={() => start(action)}>
+                      {verifying ? "Waiting for passkey…" : busy ? "Placing hold…" : actionLabel}
+                    </button>
+                    {verifying ? (
+                      <button className="btn consent-choice" type="button" onClick={() => switchToCode(action)}>Use a code instead</button>
+                    ) : (
+                      <button className="btn consent-choice" type="button" disabled={busy} onClick={() => setDeclining(true)}>Not for me</button>
+                    )}
+                  </div>
+                )}
+                <p className="fine center">{quickConfirm ? "Same card, same merchant. Only the amount changes." : "Confirm with Face ID / passkey. Leave anytime before booking."}</p>
+              </div>
+            </section>
+          </div>
+        </div>
       )}
 
-      {data?.plan_url && <p className="consent-plan-return"><Link className="btn" to={data.plan_url}>Back to your trip plan <Icon name="arrow"/></Link></p>}
-      {showDecline && <DeclineSheet onPick={onDecline} onClose={() => setShowDecline(false)} />}
-      {showReconfirm && data && (
-        <ReconfirmSheet
-          fromCents={data.reconfirmation?.from_cents ?? data.share_cents}
-          toCents={data.reconfirmation?.to_cents ?? data.share_cents}
-          capCents={cap}
-          onConfirm={async () => {
-            try {
-              await reconfirmShare(data.share_id, data.member.id, { method: "otp", code: DEMO_OTP });
-              setShowReconfirm(false);
-              await refresh();
-            } catch (err) { setError(err instanceof Error ? err.message : "Could not confirm the changed share."); setShowReconfirm(false); }
-          }}
-          onLeave={async () => {
-            await leaveShare(data.share_id, data.member.id);
-            setShowReconfirm(false);
-            setScreen("declined");
-          }}
-          onClose={() => setShowReconfirm(false)}
-        />
-      )}
+      {declining && <DeclineSheet onPick={onDecline} onClose={() => setDeclining(false)} />}
     </main>
   );
 }
