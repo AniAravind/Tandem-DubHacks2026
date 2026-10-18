@@ -2,20 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import tandemMark from "../assets/tandem-mark.png";
 
-// Scroll-driven iPhone: the phone turns around, a Tandem text lands, Messages opens and the real demo
-// conversation plays out. Prices match the seeded Tahoe demo (payments are simulated).
-type Line = { from: "me" | "tandem"; text: string; at: number; kind?: "options" | "link" | "status" | "done" };
+// A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Around it,
+// the six friends join the plan and turn green as each one holds only their own share. Prices match the seeded
+// Tahoe demo (payments are simulated).
+type Msg = { from: "me" | "tandem"; at: number; lines: string[]; link?: boolean; typing?: number };
 
-const LINES: Line[] = [
-  { from: "me", text: "tahoe nov 14–16, 6 of us, ~$200 each 🏔️", at: 0.36 },
-  { from: "tandem", text: "Found 3 cabins that fit everyone", at: 0.44, kind: "options" },
-  { from: "me", text: "1", at: 0.53 },
-  { from: "tandem", text: "Plan’s ready. Send it to the group:", at: 0.6, kind: "link" },
-  { from: "tandem", text: "5 of 6 in. Nobody’s charged until everyone is.", at: 0.69, kind: "status" },
-  { from: "tandem", text: "Booked! $175 each. Nobody fronted a cent.", at: 0.78, kind: "done" },
+const THREAD: Msg[] = [
+  { from: "me", at: 0.17, lines: ["tahoe nov 14–16, 6 of us, ~$200 each 🏔️"] },
+  { from: "tandem", at: 0.26, typing: 0.05, lines: ["Found 3 cabins that fit everyone:", "1. Pinecrest A-Frame · $175 each", "2. Cedar Hollow · $162 each", "3. Lakeview Bungalow · $178 each"] },
+  { from: "me", at: 0.33, lines: ["1"] },
+  { from: "tandem", at: 0.41, typing: 0.05, lines: ["Done. Here’s the plan for the group 👇"], link: true },
+  { from: "tandem", at: 0.63, typing: 0.04, lines: ["5 of 6 holds in. Nobody’s charged until everyone is."] },
+  { from: "tandem", at: 0.76, typing: 0.04, lines: ["Booked 🎉 Pinecrest A-Frame, $175 each.", "Nobody fronted a cent."] },
 ];
-const OPTIONS = [["Pinecrest A-Frame", "$175"], ["Cedar Hollow", "$162"], ["Lakeview Bungalow", "$178"]];
-const STEPS = [0, 0.18, 0.3, 0.6, 0.86];
+const FRIENDS = [
+  { name: "Maya", hold: 0.5 }, { name: "Priya", hold: 0.53 }, { name: "Sam", hold: 0.56 },
+  { name: "Leo", hold: 0.59 }, { name: "Alex", hold: 0.61 }, { name: "Jordan", hold: 0.72 },
+];
+const JOIN = 0.44;                                     // friends appear once the plan link is shared
+const CAPTIONS: [number, string][] = [
+  [0.12, "Text Tandem like you’d text a friend."],
+  [0.3, "It finds options that fit everyone’s budget."],
+  [0.45, "Everyone holds only their own share."],
+  [0.72, "It books the moment everyone’s in."],
+];
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
 const ease = (v: number) => 1 - Math.pow(1 - clamp(v), 3);
@@ -28,9 +38,8 @@ function useScrollProgress(ref: React.RefObject<HTMLElement | null>) {
       frame = 0;
       const el = ref.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
       const span = el.offsetHeight - window.innerHeight;
-      setP(span > 0 ? clamp(-rect.top / span) : 1);
+      setP(span > 0 ? clamp(-el.getBoundingClientRect().top / span) : 1);
     };
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
     update();
@@ -41,68 +50,115 @@ function useScrollProgress(ref: React.RefObject<HTMLElement | null>) {
   return p;
 }
 
-function Bubble({ line }: { line: Line }) {
-  return <div className={`ps-bubble ps-${line.from} ${line.kind ? `ps-k-${line.kind}` : ""}`}>
-    {line.kind === "done" ? <span aria-hidden="true">🎉 </span> : line.kind === "options" ? <span aria-hidden="true">🔎 </span> : line.kind === "link" ? <span aria-hidden="true">✨ </span> : null}
-    {line.text}
-    {line.kind === "options" && <ol className="ps-options">{OPTIONS.map(([name, price]) => <li key={name}><span>{name}</span><b>{price}</b></li>)}</ol>}
-    {line.kind === "link" && <span className="ps-link"><img src={tandemMark} alt="" width="22" height="22" />Tahoe weekend<small>tandem · plan</small></span>}
-    {line.kind === "status" && <span className="ps-meter" aria-hidden="true"><i style={{ width: "83%" }} /></span>}
+function StatusBar() {
+  return <div className="im-status" aria-hidden="true">
+    <b>9:41</b>
+    <span className="im-status-icons">
+      <svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" /><rect x="5" y="5.5" width="3" height="6.5" rx="1" /><rect x="10" y="3" width="3" height="9" rx="1" /><rect x="15" y="0" width="3" height="12" rx="1" /></svg>
+      <svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0L8 11.5Zm-4.2-4.3L2.3 5.7a8 8 0 0 1 11.4 0l-1.5 1.5a5.9 5.9 0 0 0-8.4 0ZM.7 4.1-.8 2.6a12.4 12.4 0 0 1 17.6 0l-1.5 1.5a10.3 10.3 0 0 0-14.6 0Z" /></svg>
+      <svg viewBox="0 0 27 12"><rect x=".5" y=".5" width="23" height="11" rx="3.2" fill="none" stroke="currentColor" opacity=".4" /><rect x="2" y="2" width="20" height="8" rx="2" /><rect x="24.5" y="4" width="2" height="4" rx="1" opacity=".4" /></svg>
+    </span>
+  </div>;
+}
+
+function Bubble({ msg, tail, delivered }: { msg: Msg; tail: boolean; delivered: boolean }) {
+  return <div className={`im-row im-${msg.from}`}>
+    <div className={`im-bubble ${tail ? "im-tail" : ""}`}>
+      {msg.lines.map((line) => <span key={line}>{line}</span>)}
+    </div>
+    {msg.link && <div className="im-preview">
+      <div className="im-preview-art"><img src={tandemMark} alt="" /><span>Tahoe weekend</span></div>
+      <div className="im-preview-meta"><b>Tahoe weekend · 6 people</b><span>tandem.app</span></div>
+    </div>}
+    {delivered && <small className="im-delivered">Delivered</small>}
   </div>;
 }
 
 export default function PhoneStory() {
   const section = useRef<HTMLElement>(null);
+  const tilt = useRef<HTMLDivElement>(null);
   const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   const scrolled = useScrollProgress(section);
   const p = reduced ? 1 : scrolled;
 
-  const turn = ease(p / 0.16);                       // back -> front
-  const lock = clamp((p - 0.16) / 0.05);             // lock screen + notification
-  const open = ease((p - 0.27) / 0.06);              // Messages slides up
-  const outro = ease((p - 0.86) / 0.08);             // closing call to action
-  const shown = LINES.filter((l) => p >= l.at);
-  const step = STEPS.filter((s) => p >= s).length - 1;
+  // A gentle extra tilt that follows the pointer (desktop only); CSS variables avoid re-rendering React.
+  useEffect(() => {
+    if (reduced) return;
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" || !tilt.current) return;
+      tilt.current.style.setProperty("--mx", `${((e.clientX / window.innerWidth) - 0.5) * 10}deg`);
+      tilt.current.style.setProperty("--my", `${((e.clientY / window.innerHeight) - 0.5) * -8}deg`);
+    };
+    window.addEventListener("pointermove", onMove);
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [reduced]);
 
-  return <section ref={section} className={`phone-story ${reduced ? "is-static" : ""}`} aria-label="How Tandem works, shown in a text conversation">
+  const lift = ease(p / 0.14);                             // lying on the table -> standing, facing you
+  const outro = ease((p - 0.86) / 0.07);
+  const shown = THREAD.filter((m) => p >= m.at);
+  const typing = THREAD.find((m) => m.typing && p >= m.at - m.typing && p < m.at);
+  const lastMine = [...shown].reverse().find((m) => m.from === "me");
+  const caption = [...CAPTIONS].reverse().find(([at]) => p >= at);
+  const booked = p >= THREAD[THREAD.length - 1].at;
+  const rx = 58 * (1 - lift), rz = -24 * (1 - lift), ry = -16 + 6 * lift;
+
+  return <section ref={section} className={`phone-story ${reduced ? "is-static" : ""}`} aria-label="How Tandem works, shown as an iMessage conversation">
     <div className="ps-stage">
-      <div className="ps-copy" style={{ opacity: 1 - ease((p - 0.08) / 0.1) * 0.85 }}>
-        <h1>Group plans, settled<br />in a text.</h1>
-        <p>Tell Tandem what you want. Everyone pays only their share.</p>
+      <div className="ps-copy">
+        <div className="ps-hero" style={{ opacity: 1 - ease((p - 0.06) / 0.06), transform: `translateY(${-ease((p - 0.06) / 0.06) * 14}px)` }}>
+          <h1>Group plans, settled<br />in a text.</h1>
+          <p>Everyone pays only their share. Nobody fronts the money.</p>
+        </div>
+        <p className="ps-caption" key={caption?.[1]} style={{ opacity: caption ? 1 : 0 }}>
+          {caption && <><span>{CAPTIONS.indexOf(caption) + 1}/{CAPTIONS.length}</span>{caption[1]}</>}
+        </p>
       </div>
-      <div className="ps-phone-wrap" style={{ transform: `translateY(${(1 - turn) * 6}%) scale(${0.92 + turn * 0.08})` }}>
-        <div className="ps-phone" style={{ transform: `rotateY(${180 - turn * 180}deg) rotateZ(${(1 - turn) * -8}deg)` }}>
-          <div className="ps-face ps-back" aria-hidden="true">
-            <span className="ps-cams"><i /><i /><i /></span>
-            <img src={tandemMark} alt="" className="ps-back-logo" />
-          </div>
-          <div className="ps-face ps-front">
-            <div className="ps-island" aria-hidden="true" />
-            <div className="ps-lock" style={{ opacity: 1 - open }} aria-hidden={open > 0.5}>
-              <span className="ps-time">9:41</span>
-              <span className="ps-date">Saturday, November 1</span>
-              <div className="ps-note" style={{ opacity: lock, transform: `translateY(${(1 - lock) * -14}px)` }}>
-                <img src={tandemMark} alt="" width="28" height="28" />
-                <div><b>Tandem</b><span>Found 3 cabins that fit everyone 🏔️</span></div><small>now</small>
-              </div>
-            </div>
-            <div className="ps-app" style={{ transform: `translateY(${(1 - open) * 100}%)` }} aria-hidden={open < 0.5}>
-              <div className="ps-app-head"><img src={tandemMark} alt="" width="34" height="34" /><b>Tandem</b></div>
-              {/* column-reverse keeps the newest message at the bottom and lets older ones scroll off the top */}
-              <div className="ps-thread" aria-live="polite" style={{ paddingBottom: `calc(14px + ${outro * 46}%)` }}>
-                {[...shown].reverse().map((l) => <Bubble line={l} key={l.at} />)}
-              </div>
-              <div className="ps-cta" style={{ opacity: outro, pointerEvents: outro > 0.5 ? "auto" : "none" }}>
-                <p>Your turn.</p>
-                <Link className="ps-cta-btn" to="/chat/demo" tabIndex={outro > 0.5 ? 0 : -1}>Try the live demo</Link>
-                <small>Demo data · payments are simulated</small>
+      <div className="ps-scene">
+        <div className="ps-floor" style={{ transform: `translateX(-50%) scale(${0.7 + lift * 0.3}, ${1.6 - lift})`, opacity: 0.35 + lift * 0.3 }} aria-hidden="true" />
+        <div className="ps-tilt" ref={tilt}>
+          <div className={`ps-phone ${booked ? "is-booked" : ""}`}
+            style={{ transform: `rotateX(calc(${rx}deg + var(--my, 0deg))) rotateY(calc(${ry}deg + var(--mx, 0deg))) rotateZ(${rz}deg) translateY(${(1 - lift) * 8}%)` }}>
+            {Array.from({ length: 9 }, (_, i) => <div key={i} className="ps-slice" style={{ transform: `translateZ(${(i - 4) * 1.6}px)` }} aria-hidden="true" />)}
+            <div className="ps-face ps-back" aria-hidden="true"><span className="ps-cams"><i /><i /><i /></span><img src={tandemMark} alt="" /></div>
+            <div className="ps-face ps-front">
+              <div className="ps-island" aria-hidden="true" />
+              <div className="im">
+                <StatusBar />
+                <header className="im-head">
+                  <span className="im-back" aria-hidden="true">‹</span>
+                  <div className="im-contact"><span className="im-avatar"><img src={tandemMark} alt="" /></span><b>Tandem <i aria-hidden="true">›</i></b></div>
+                  <svg className="im-video" viewBox="0 0 24 16" aria-hidden="true"><rect x="1" y="2" width="15" height="12" rx="3" /><path d="m17 6.5 5-3v9l-5-3z" /></svg>
+                </header>
+                <div className="im-thread" aria-live="polite" style={{ paddingBottom: `calc(8px + ${outro * 44}%)` }}>
+                  {typing && <div className="im-row im-tandem"><div className="im-bubble im-tail im-typing" aria-label="Tandem is typing"><i /><i /><i /></div></div>}
+                  {[...shown].reverse().map((m, i, list) => <Bubble key={m.at} msg={m}
+                    tail={i === 0 || list[i - 1].from !== m.from} delivered={m === lastMine && !typing && list[0] === m} />)}
+                  <p className="im-stamp"><b>iMessage</b>Today 9:41 AM</p>
+                </div>
+                <div className="im-compose" aria-hidden="true">
+                  <span className="im-plus">+</span>
+                  <span className="im-field">iMessage<svg viewBox="0 0 12 16"><rect x="3.5" y="1" width="5" height="9" rx="2.5" /><path d="M1.5 7.5a4.5 4.5 0 0 0 9 0M6 12v3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg></span>
+                </div>
+                <div className="ps-cta" style={{ opacity: outro, pointerEvents: outro > 0.5 ? "auto" : "none" }}>
+                  <p>Your turn.</p>
+                  <Link className="ps-cta-btn" to="/chat/demo" tabIndex={outro > 0.5 ? 0 : -1}>Try the live demo</Link>
+                  <small>Demo data · payments are simulated</small>
+                </div>
+                <span className="im-home" aria-hidden="true" />
               </div>
             </div>
           </div>
         </div>
+        <ul className="ps-friends" aria-label="Friends in the plan">
+          {FRIENDS.map((f, i) => {
+            const joined = p >= JOIN + i * 0.008, held = p >= f.hold;
+            return <li key={f.name} className={`ps-friend ps-f${i} ${joined ? "is-in" : ""} ${held ? "is-held" : ""}`} aria-hidden={!joined}>
+              <span>{f.name[0]}</span><small>{f.name}</small>
+            </li>;
+          })}
+        </ul>
       </div>
-      <ol className="ps-dots" aria-hidden="true">{STEPS.map((s, i) => <li key={s} className={i === step ? "on" : ""} />)}</ol>
-      {p < 0.05 && !reduced && <span className="ps-scroll" aria-hidden="true">↓ scroll</span>}
+      {p < 0.04 && !reduced && <span className="ps-scroll" aria-hidden="true">↓ scroll</span>}
     </div>
   </section>;
 }
