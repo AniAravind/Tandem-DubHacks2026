@@ -113,6 +113,9 @@ def run_agent(group_id, member_id=None, event: dict | None = None, message_id=No
         post_card(group_id, AgentMessage(text=SLOW_DOWN_TEXT))
         return
     if event and member_id is None and event.get("type") in {"vote_closed", "share_declined"}:
+        if hasattr(orchestrator.get_engine(group_id), "snapshot"):
+            post_all(group_id, orchestrator.run(group_id, None, event))
+            return
         # Trusted scheduler events still act through a real active group member.
         group = Group.objects.select_related("organizer").get(pk=group_id)
         if group.organizer_id and group.organizer.status == "active":
