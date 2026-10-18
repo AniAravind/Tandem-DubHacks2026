@@ -1,5 +1,5 @@
 import contextlib, contextvars, hashlib, json
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Max
 from django.utils import timezone
 
@@ -51,6 +51,12 @@ def _hash_event(prev: str, seq: int, type: str, actor: str, group_id, purchase_i
 @transaction.atomic
 def log_event(type: str, actor: str, group_id=None, purchase_id=None, payload: dict | None = None, simulated=False):
     from core.models import EventLog
+    # Lock a stable resource before selecting the tail. Locking only the last row
+    # lets two waiting PostgreSQL queries keep the same old tail after a commit,
+    # and an empty chain has no row to lock at all.
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [0x54414E44454D])
     last = EventLog.objects.select_for_update().order_by("-seq").first()
     seq = (last.seq if last else 0) + 1
     prev = last.hash if last else ""
