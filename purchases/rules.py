@@ -965,7 +965,7 @@ class RulesEngine:
 
     def _publish_buying_plan(self, member, args):
         from purchases.briefs import publish
-        return publish(member, args.get("featured_offer"))
+        return publish(member, args.get("featured_offer"), args.get("featured_offer_id"))
 
     def _live_search(self, member, args):
         from purchases import live

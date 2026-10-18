@@ -204,3 +204,43 @@ class LiveSearchTests(TestCase):
         self.assertTrue(all(o["fits_budget"] is None for o in out[0].card.data["offers"]))   # no private budgets in groups
         from purchases.testing import assert_no_money_state_change
         assert_no_money_state_change(tahoe.id, since)
+
+    def test_full_trip_research_preserves_all_components_and_tool_requests(self):
+        from agent.tests.helpers import ScriptedLLM
+        args = {'goal':'Tahoe cabin weekend','category':'rental','group_size':6,
+                'budget_per_person':200,'requirements':['Nov 14-16','hot tub'],
+                'decision_details':[{'topic':'Origin','value':'Seattle'},{'topic':'Destination','value':'Tahoe'}],
+                'research_kinds':['flight','stay','activity'],'open_questions':[],
+                'plan_sections':[{'heading':'Weekend outline','body':'Suggestion: arrive Friday, hike Saturday, return Sunday.'}]}
+        self.assertTrue(self.engine.execute('save_buying_brief',args,self.actor)['ok'])
+        model = ScriptedLLM(*[reply(calls=[tool_call('live_search',{'query':query,'kind':kind,'group_size':6})])
+            for kind,query in [('flight','Seattle to Reno Nov 14-16 flights'),('stay','Tahoe hot tub cabin Nov 14-16'),('activity','Tahoe hiking November trails')]])
+        out = Orchestrator(self.group.id,llm_chat=model).run(self.actor,text='Find the flights, stay and things to do for our trip')
+        self.assertEqual(len(model.requests),3)
+        self.assertEqual({o.kind for o in live.for_plan(self.group,build_group_state(self.group)['current_buying_brief']['revision'])}, {'flight','stay','activity'})
+        self.assertEqual(sum(m.card is not None and m.card.type=='LiveOffersCard' for m in out),3)
+        published=self.engine.execute('publish_buying_plan',{},self.actor)
+        self.assertTrue(published['ok'],published)
+        plan=TripPlan.objects.get(pk=published['data']['plan_id'])
+        self.assertEqual({o['kind'] for o in plan.details['live_offers']},{'flight','stay','activity'})
+        self.assertEqual(plan.details['plan_sections'],args['plan_sections'])
+        flight = next(o for o in live.for_plan(self.group,plan.details['revision']) if o.kind == 'flight')
+        featured = self.engine.execute('publish_buying_plan', {'featured_offer_id':str(flight.id)}, self.actor)
+        self.assertTrue(featured['ok'], featured)
+        plan.refresh_from_db()
+        self.assertEqual(plan.details['featured_offer_id'],str(flight.id))
+        rejected = self.engine.execute('publish_buying_plan', {'featured_offer_id':'00000000-0000-0000-0000-000000000000'}, self.actor)
+        self.assertFalse(rejected['ok'])
+        self.assertEqual(build_group_state(self.group)['missing_details'],[])
+
+    def test_specific_gift_questions_persist_without_a_scripted_menu(self):
+        self.say("A birthday gift for myself")
+        result=self.engine.execute('save_buying_brief',{'goal':'Birthday gift for a coffee-loving friend',
+            'category':'gift','group_size':1,
+            'decision_details':[{'topic':'Interests','value':'Coffee and cooking'}],
+            'open_questions':['When does the gift need to arrive?'], 'research_kinds':['gift']},self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(build_group_state(self.group)['missing_details'],['When does the gift need to arrive?'])
+        result=self.engine.execute('save_buying_brief',{'goal':'Gift','category':'gift','group_size':1,
+            'plan_sections':[{'heading':'Buy','body':'https://invented.example/fake'}]},self.actor)
+        self.assertFalse(result['ok'])

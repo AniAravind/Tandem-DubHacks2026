@@ -137,6 +137,10 @@ def publish(member, args):
                                       title=redact(args['title']), summary=redact(args['summary']), expected_members=size, details=brief)
         log_event('plan.published', actor=f'member:{member.id}', group_id=group.id,
                   payload={'plan_id': str(plan.id), 'expected_members': size, 'title': plan.title})
+    from purchases import live
+    plan.details = {**brief, **({'payment_simulation':True} if plan.details.get('payment_simulation') else {}),
+                    'live_offers':[live.offer_json(o) for o in live.for_plan(member.group, brief.get('revision'))]}
+    plan.save(update_fields=['details','updated_at'])
     return {'plan_id': str(plan.id), 'title': plan.title, 'summary': plan.summary,
             'expected_members': plan.expected_members, 'share_url': plan_url(plan)}
 

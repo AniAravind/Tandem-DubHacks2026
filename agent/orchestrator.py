@@ -350,6 +350,15 @@ class Orchestrator:
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
             this_round = self.tool_results[round_start:]
             informational = this_round and all(name in {"live_search", "compare_options"} for name, _ in this_round)
+            if private and any(name == 'live_search' for name, _ in this_round) and calls < MAX_TOOL_CALLS:
+                from chat.models import PhotonSession
+                from purchases import live
+                brief = PhotonSession.objects.get(member__group=self.group).planning_state
+                done = {o.kind for o in live.for_plan(self.group, brief.get('revision'))}
+                pending = set(brief.get('research_kinds', [])) - done
+                if pending and not brief.get('open_questions'):
+                    messages.append({'role':'system','content':'Research components requested in the saved brief still need tool calls: '+', '.join(sorted(pending))+'. Search only those relevant components; do not repeat a completed search.'})
+                    continue
             if (private or informational) and any(_presents_itself(name, data) for name, data in this_round):
                 # The server writes the reply for these results, so a narration call would only spend quota.
                 break
@@ -412,7 +421,10 @@ class Orchestrator:
         elif presenting and presenting[-1][0] == 'compare_options':
             text = cards.compare_text(presenting[-1][1])
         elif presenting and presenting[-1][0] == 'live_search':
-            text = cards.live_offers_text(presenting[-1][1])
+            batches = [data for name,data in presenting if name == 'live_search']
+            text = '\n\n'.join((data.get('query','Research')+'\n\n' if len(batches)>1 else '')+cards.live_offers_text(data) for data in batches)
+            if len(batches)>1:
+                text += '\n\nTo choose from an earlier section, tell me the type and title, such as the hotel name. A letter alone selects from the latest search.'
         elif any(name == 'search_options' for name, data in self.tool_results):
             from chat.models import PhotonSession
             if PhotonSession.objects.filter(member__group=self.group).exists():

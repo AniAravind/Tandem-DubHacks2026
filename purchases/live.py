@@ -210,3 +210,14 @@ def latest(group, revision: str | None = None) -> list[LiveOffer]:
     if newest is None or (revision is not None and newest.brief_revision != revision):
         return []
     return list(LiveOffer.objects.filter(group=group, search_id=newest.search_id).order_by("label"))
+
+
+def for_plan(group, revision):
+    """Keep the latest search for EACH requested component in the current brief."""
+    rows = LiveOffer.objects.filter(group=group, brief_revision=revision or '').order_by('-created_at')
+    batches, result = {}, []
+    for offer in rows[:150]:
+        batches.setdefault(offer.kind, offer.search_id)
+        if batches[offer.kind] == offer.search_id:
+            result.append(offer)
+    return sorted(result, key=lambda o:(o.kind,o.label))

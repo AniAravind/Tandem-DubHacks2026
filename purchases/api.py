@@ -94,6 +94,10 @@ def group_detail(request, gid):
         latest = Purchase.objects.filter(group_id=gid).order_by("-created_at").first()
         payload["current_purchase_id"] = str(latest.id) if latest else None
     if request.query_params.get("include") == "workspace":
+        from purchases.models import TripPlan
+        from purchases.plans import payload as plan_payload
+        plan = TripPlan.objects.filter(group_id=gid).order_by('-created_at').first()
+        payload['plan'] = plan_payload(plan, request) if plan else None
         payload["current_member_id"] = str(member.id)
         payload["can_switch_member"] = settings.DEMO_MODE and member_id_from_request(request) is None
     return Response(payload)

@@ -86,16 +86,8 @@ def handle(orchestrator, actor, text):
         if result.get('ok'):
             return orchestrator.compose(None)
         return [AgentMessage(text='I couldn’t publish that choice: '+result['error']['message']+' No payment was taken.')]
-    if re.fullmatch(r'(?:help\s+)?(?:find|show|search|see|refresh)(?:\s+me)?(?:\s+(?:the|some|my))?\s+options(?:\s+please)?',text,re.I) and session.planning_state:
-        if options:
-            orchestrator.tool_results.append(('search_options',{'options':options}))
-            return orchestrator.compose(None)
-        brief=session.planning_state
-        args={'category':brief['category'],'group_size':brief['group_size']}
-        if brief.get('budget_per_person_cents') is not None:
-            args['budget_per_person_max']=brief['budget_per_person_cents']/100
-        result=orchestrator.run_tool('search_options',json.dumps(args),actor)
-        if result.get('ok'):
-            return orchestrator.compose(None)
-        return [AgentMessage(text='I couldn’t refresh the shortlist: '+result['error']['message'])]
+    if options and re.fullmatch(r'(?:help\s+)?(?:find|show|see)(?:\s+me)?(?:\s+(?:the|some|my))?\s+options(?:\s+please)?',text,re.I):
+        orchestrator.tool_results.append(('search_options',{'options':options}))
+        return orchestrator.compose(None)
+    # Open-ended discovery belongs to the model: it chooses tools from the current intent.
     return None

@@ -310,3 +310,17 @@ class SharedPlanTests(TestCase):
                 self.assertEqual(approved.status_code, 200, approved.json())
         self.assertEqual(Purchase.objects.get(group=self.plan.group).state, 'booked')
         self.assertEqual(owner.get(self.path).json()['my_share']['status'], 'captured')
+
+    def test_dashboard_workspace_includes_only_the_joined_groups_saved_plan(self):
+        owner=APIClient()
+        self.owner_join(owner)
+        self.plan.details={**self.plan.details,'plan_sections':[{'heading':'Itinerary','body':'Suggestion: hike Saturday.'}],
+            'live_offers':[{'offer_id':'saved-source','kind':'stay','url':'https://example.com/stay','title':'Saved hotel','source':'example.com','snippet':'Source details'}]}
+        self.plan.save()
+        url=f'/api/v1/groups/{self.plan.group_id}?include=workspace'
+        response=owner.get(url)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['plan']['details']['live_offers'][0]['url'],'https://example.com/stay')
+        self.assertEqual(response.json()['plan']['details']['plan_sections'][0]['heading'],'Itinerary')
+        self.assertEqual(APIClient().get(url).status_code,401)
+        self.assertNotIn('PRIVATE TRANSCRIPT',str(response.json()))
