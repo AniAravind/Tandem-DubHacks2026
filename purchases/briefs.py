@@ -13,7 +13,7 @@ from purchases.models import TripPlan
 
 def explicit_buyer_count(text):
     """Only unambiguous stated counts; leave other language to clarification."""
-    total = re.search(r'\b(\d+)\s+(?:people|persons|buyers|participants)\s+(?:in\s+)?total\b|\b(?:total(?:\s+of)?|group\s+of)\s+(\d+)\b', text, re.I)
+    total = re.search(r'\b(\d+)\s+(?:people|persons|buyers|participants)(?:\s+(?:in\s+)?total)?\b|\b(?:total(?:\s+of)?|group\s+of)\s+(\d+)\b', text, re.I)
     if total:
         return int(next(v for v in total.groups() if v))
     friends = re.search(r'\b(?:me|myself|I)\s+and\s+(\d+)\s+(?:friends|others)\b', text, re.I)
@@ -33,42 +33,67 @@ def save(member, args):
     session = PhotonSession.objects.select_for_update().filter(member=member).first()
     if session is None:
         raise RuleError('private_planning_only', 'Save buying requirements in the individual conversation.')
-    latest = ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').values_list('text_redacted', flat=True).first() or ''
+    from purchases.consensus import canonical_category
+    from agent.context import TRAVEL_CATEGORIES
+    from agent.dialogue import public_brief
+    message = ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').first()
+    latest = message.text_redacted if message else ''
+    previous = dict(session.planning_state)
+    category = canonical_category(args['category'])
+    old_category = previous.get('category')
+    travel = category in TRAVEL_CATEGORIES and old_category in TRAVEL_CATEGORIES
+    changing = bool(previous.get('goal')) and (args.get('new_goal') is True or (category != old_category and not travel))
+    short_reply = bool(re.fullmatch(r'\s*(?:yes|no|confirmed|correct|okay|ok|sure|\d+(?:\.\d+)?)\s*[.!]?\s*', latest, re.I))
+    if changing and short_reply:
+        raise RuleError('goal_change_not_confirmed', 'This is an answer to the pending question, not a new purchase. Preserve the current goal and confirmed facts.')
+    base = {} if changing else previous
     count = explicit_buyer_count(latest)
     if count is not None and args['group_size'] != count:
-        raise RuleError('buyer_count_mismatch', f'The latest request explicitly specifies {count} total buyer(s). Use group_size={count}.')
+        raise RuleError('buyer_count_mismatch', f'The user explicitly specified {count} total buyers. Use group_size={count}.')
+    if base.get('_buyer_count_confirmed', bool(base.get('group_size'))) and base.get('group_size') and args['group_size'] != base['group_size'] and count is None:
+        raise RuleError('buyer_count_not_confirmed', f"Keep the confirmed {base['group_size']} buyers; a short answer or reworded goal cannot change the roster.")
     budget = args.get('budget_per_person')
     if budget is not None:
         known = set()
-        for text in ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').values_list('text_redacted', flat=True)[:50]:
-            known = planning_amounts_in(text)
-            if known:
-                break
+        if not changing:
+            for text in ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').values_list('text_redacted', flat=True)[:50]:
+                known = planning_amounts_in(text)
+                if known:
+                    break
+            if not known and base.get('budget_per_person_cents') is not None:
+                known.add(base['budget_per_person_cents'])
+            if message and base.get('_budget_answer_seq') == message.seq:
+                known = {base['budget_per_person_cents']}
+        else:
+            known = planning_amounts_in(latest)
         if round(budget * 100) not in known:
-            raise RuleError('budget_not_confirmed', 'Use the most recent explicitly stated user budget, or omit it and ask. Never invent a budget.')
-    recommendations = args.get('recommendations', [])
+            raise RuleError('budget_not_confirmed', 'Use the confirmed budget from the saved brief or the current explicit budget answer. Do not repeatedly ask to confirm a budget already provided.')
+    recommendations = args.get('recommendations', base.get('recommendations', []))
     if any(amounts_in(item) or 'http' in item.lower() for item in recommendations):
         raise RuleError('unverified_offer', 'General recommendations must be qualitative. Only catalog tools can supply prices or merchant offers.')
-    if any('http' in v.lower() for section in args.get('plan_sections', []) for v in section.values()):
+    sections = args.get('plan_sections', base.get('plan_sections', []))
+    if any('http' in v.lower() for section in sections for v in section.values()):
         raise RuleError('unverified_offer', 'Keep plan sections as plain text. Source links are attached from real search results by the server.')
-    from purchases.consensus import canonical_category
-    state = {'goal':redact(args['goal']), 'category':canonical_category(args['category']), 'group_size':args['group_size'],
-             'budget_per_person_cents':round(budget * 100) if budget is not None else None,
-             'summary':redact(args.get('summary', '')), 'requirements':[redact(v) for v in args.get('requirements', [])],
-             'recommendations':[redact(v) for v in recommendations],
-             'decision_details':[{k:redact(v) for k,v in item.items()} for item in args.get('decision_details',[])],
-             'open_questions':[redact(v) for v in args.get('open_questions',[])],
-             'research_kinds':list(dict.fromkeys(args.get('research_kinds',[]))),
-             'plan_sections':[{k:redact(v) for k,v in item.items()} for item in args.get('plan_sections',[])]}
-    previous = dict(session.planning_state)
-    revision = previous.pop('revision', None)
-    # Presentation edits must not invalidate an already displayed shortlist.
-    constraints = ('goal', 'category', 'group_size', 'budget_per_person_cents', 'requirements', 'decision_details')
-    unchanged = all(previous.get(key) == state.get(key) for key in constraints)
+    details = {item['topic'].casefold():item for item in base.get('decision_details', [])}
+    for item in args.get('decision_details', []):
+        details[item['topic'].casefold()] = {key:redact(value) for key,value in item.items()}
+    state = {**base, 'goal':base.get('goal') or redact(args['goal']), 'category':base.get('category') or category,
+             'group_size':count or (base.get('group_size') if base.get('_buyer_count_confirmed', True) else None) or args['group_size'],
+             '_buyer_count_confirmed':count is not None or base.get('_buyer_count_confirmed', False),
+             'budget_per_person_cents':round(budget * 100) if budget is not None else base.get('budget_per_person_cents'),
+             'summary':redact(args.get('summary', base.get('summary', ''))),
+             'requirements':[redact(v) for v in args.get('requirements', base.get('requirements', []))],
+             'recommendations':[redact(v) for v in recommendations], 'decision_details':list(details.values()),
+             'open_questions':[redact(v) for v in args.get('open_questions', base.get('open_questions', []))],
+             'research_kinds':list(dict.fromkeys(args.get('research_kinds', base.get('research_kinds', [])))),
+             'plan_sections':[{key:redact(value) for key,value in item.items()} for item in sections]}
+    revision = base.get('revision')
+    constraints = ('category', 'group_size', 'budget_per_person_cents', 'requirements', 'decision_details')
+    unchanged = all(base.get(key) == state.get(key) for key in constraints)
     state['revision'] = revision if unchanged and revision else uuid.uuid4().hex
     session.planning_state = state
     session.save(update_fields=['planning_state'])
-    return state
+    return public_brief(state)
 
 
 @transaction.atomic
@@ -77,8 +102,9 @@ def publish(member, featured_offer=None, featured_offer_id=None):
     from purchases.plans import plan_url
     Group.objects.select_for_update().get(pk=member.group_id)
     session = PhotonSession.objects.filter(member=member).first()
-    state = session.planning_state if session else {}
-    if not state:
+    from agent.dialogue import public_brief
+    state = public_brief(session.planning_state) if session else {}
+    if not state.get('goal'):
         raise RuleError('requirements_needed', 'Save the buying goal and buyer count first.')
     from purchases import live
     offers = live.for_plan(member.group, state['revision'])

@@ -91,8 +91,11 @@ class PrivateJourneyTests(TestCase):
                         self.brief(goal="Birthday gift for sister", category="gift_bundle", group_size=1, budget_per_person=40),
                         reply("What does she enjoy? A hobby or two helps me pick."))
         self.assertIn("What does she enjoy", out[-1].text_redacted)
-        out = self.send("1")                                           # the old cabin list is no longer current
-        self.assertIn("don’t have current options", out[0].text_redacted)
+        state=PhotonSession.objects.get(member=self.member).planning_state
+        self.assertIn("What does she enjoy", state["_dialogue"]["question"])
+        calls=self.model.calls
+        out = self.send("1")  # A detail answer goes to the model, never to the obsolete cabin shortlist.
+        self.assertEqual(self.model.calls,calls+1)
         self.assertFalse(TripPlan.objects.exists())
 
         out = self.send("she loves baking", self.search(category="gift_bundle", group_size=1, budget_per_person_max=40))

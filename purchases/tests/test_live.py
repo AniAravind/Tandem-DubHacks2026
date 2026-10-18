@@ -213,8 +213,17 @@ class LiveSearchTests(TestCase):
                 'research_kinds':['flight','stay','activity'],'open_questions':[],
                 'plan_sections':[{'heading':'Weekend outline','body':'Suggestion: arrive Friday, hike Saturday, return Sunday.'}]}
         self.assertTrue(self.engine.execute('save_buying_brief',args,self.actor)['ok'])
-        model = ScriptedLLM(*[reply(calls=[tool_call('live_search',{'query':query,'kind':kind,'group_size':6})])
-            for kind,query in [('flight','Seattle to Reno Nov 14-16 flights'),('stay','Tahoe hot tub cabin Nov 14-16'),('activity','Tahoe hiking November trails')]])
+        requests = [('flight','Seattle to Reno Nov 14-16 flights'),('stay','Tahoe hot tub cabin Nov 14-16'),('activity','Tahoe hiking November trails')]
+        class ResearchModel:
+            def __init__(inner): inner.requests=[]
+            def __call__(inner,messages,tools,**kw):
+                kind,query=requests[len(inner.requests)]
+                inner.requests.append(messages)
+                self.fake.rows = [{'title':'Seattle to Reno flights','url':'https://example.com/flights/seattle/reno','content':'Advertised fares from $400'}] if kind=='flight' else ROWS
+                args={'query':query,'kind':kind,'group_size':6}
+                if kind=='flight': args['route']={'origin':'Seattle','destination':'Reno'}
+                return reply(calls=[tool_call('live_search',args)])
+        model=ResearchModel()
         out = Orchestrator(self.group.id,llm_chat=model).run(self.actor,text='Find the flights, stay and things to do for our trip')
         self.assertEqual(len(model.requests),3)
         self.assertEqual({o.kind for o in live.for_plan(self.group,build_group_state(self.group)['current_buying_brief']['revision'])}, {'flight','stay','activity'})

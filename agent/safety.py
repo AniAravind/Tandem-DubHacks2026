@@ -69,8 +69,8 @@ def amounts_in(text: str) -> set[int]:
 def planning_amounts_in(text: str) -> set[int]:
     """Explicit user budget phrases, including '300 per person' without a dollar sign."""
     values = amounts_in(text)
-    for amount in re.findall(r'(?<![\d/])\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?\b|USD\b|(?:per\s+(?:person|buyer)|each)\b)', text, re.I):
-        values.add(round(float(amount) * 100))
+    for amount in re.findall(r'(?<![\d/])\b(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:dollars?\b|USD\b|(?:(?:per|a)\s+(?:person|buyer|traveler)|each)\b)', text, re.I):
+        values.add(round(float(amount.replace(",","")) * 100))
     return values
 
 

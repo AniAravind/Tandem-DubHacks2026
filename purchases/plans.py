@@ -113,7 +113,8 @@ def publish(member, args):
     if not isinstance(size, int) or not 1 <= size <= 20:
         raise RuleError('invalid_group_size', 'Search using the intended buyer count before publishing.')
     from chat.models import PhotonSession
-    brief = PhotonSession.objects.get(member=member).planning_state
+    from agent.dialogue import public_brief
+    brief = public_brief(PhotonSession.objects.get(member=member).planning_state)
     if brief and source.meta.get('brief_revision') != brief.get('revision'):
         raise RuleError('stale_option', 'Those options belong to an older buying goal. Search for the current goal first.')
     plan = TripPlan.objects.filter(source_group=member.group, selected_option__meta__source_option_id=str(source.id)).first()
@@ -146,6 +147,7 @@ def publish(member, args):
 
 
 def payload(plan, request):
+    from purchases.live import sanitize_offer
     member = Member.objects.filter(pk=member_id_from_request(request), group=plan.group, status='active').first()
     purchase = Purchase.objects.filter(group=plan.group).order_by('-created_at').first()
     option = purchase.option if purchase else plan.selected_option
@@ -154,7 +156,7 @@ def payload(plan, request):
             'group_id': str(plan.group_id), 'expected_members': plan.expected_members, 'joined_count': people.count(),
             'expires_at': iso(expires_at(plan)), 'expired': not purchase and timezone.now() >= expires_at(plan),
             'checkout_ready': bool(option and plan.vote_id), 'category': option.category if option else plan.details.get('category', 'purchase'),
-            'details': plan.details, 'payment_simulation': bool(plan.details.get('payment_simulation')),
+            'details': {**plan.details, 'live_offers':[sanitize_offer(o) for o in plan.details.get('live_offers',[])]}, 'payment_simulation': bool(plan.details.get('payment_simulation')),
             'simulation_available': settings.DEMO_MODE and settings.PAYMENTS_GATEWAY == 'simulated',
             'option': {'title': option.title, 'total_cents': option.total_cents, 'currency': option.currency,
                        'per_person_cents': -(-option.total_cents // plan.expected_members), 'features': option.features,

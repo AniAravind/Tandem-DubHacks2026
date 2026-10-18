@@ -48,11 +48,51 @@ def configured() -> bool:
 
 def _query(args: dict) -> str:
     parts = [args["query"].strip()]
+    route = args.get('route') or {}
+    if args.get('kind') == 'flight' and route:
+        parts.insert(0, f"flights from {route['origin']} to {route['destination']}")
+        for key in ('origin_airport','destination_airport'):
+            if route.get(key):
+                parts.append(route[key].upper())
+        if route.get('trip_type') == 'round_trip':
+            parts.append('round trip')
+        elif route.get('trip_type') == 'one_way':
+            parts.append('one way')
+    for key in ('start','end'):
+        value = (args.get('dates') or {}).get(key)
+        if value and not any(value in part for part in parts):
+            parts.append(value)
     if args.get("location") and args["location"].lower() not in parts[0].lower():
         parts.append(args["location"])
     if args.get("kind") == "stay" and args.get("group_size") and "sleep" not in parts[0].lower():
         parts.append(f"sleeps {args['group_size']}")
-    return " ".join(parts)[:200]
+    free_query = args['query'].strip()
+    parts.remove(free_query)
+    constraints = ' '.join(parts)
+    if len(constraints) > 195:
+        raise LiveSearchError('query_too_long', 'Use concise route/place names so all confirmed dates and constraints fit the search query.')
+    remaining = 200 - len(constraints) - (1 if constraints else 0)
+    return (constraints + (' ' if constraints else '') + free_query[:remaining]).strip()
+
+
+def route_direction(text, route):
+    """Check explicit ordering of user/model-supplied cities/codes, without an airport lookup table."""
+    positions = []
+    for side in ('origin','destination'):
+        values = [route.get(side,''), route.get(side+'_airport','')]
+        matches = []
+        for value in values:
+            if not value:
+                continue
+            pattern = r'(?<![a-z])' + re.escape(value).replace(r'\ ', r'[\s_-]+') + r'(?![a-z])'
+            flags = re.I if value != route.get(side+'_airport') or text.startswith('https://') else 0
+            match = re.search(pattern, text, flags)
+            if match:
+                matches.append(match.start())
+        positions.append(min(matches) if matches else None)
+    if None in positions or positions[0] == positions[1]:
+        return None
+    return 'forward' if positions[0] < positions[1] else 'reverse'
 
 
 def find_price(text: str) -> tuple[int, str, str] | None:
@@ -80,6 +120,8 @@ def per_person_estimate(price_cents: int | None, unit: str, group_size: int, n_n
         return None
     if unit in {"person", "each"}:
         return price_cents
+    if kind == 'flight':
+        return None  # An advertised fare is not a group total. Never divide it by travelers.
     if unit == "night":
         return -(-price_cents * n_nights // group_size) if n_nights else None
     if unit == "listed" and kind != "stay":
@@ -157,6 +199,9 @@ def search(member, args: dict, brief: dict | None = None, client=None) -> dict:
     if not configured():
         raise LiveSearchError("live_search_unavailable",
                               "Live web search isn’t set up. Use search_options for demo offers or give qualitative advice.")
+    route = args.get('route') or {}
+    if args.get('kind') == 'flight' and not (route.get('origin') and route.get('destination')):
+        raise LiveSearchError('flight_route_required', 'Supply the confirmed origin and destination in route before searching flights. Ask only for missing route details.')
     _guard(member.group_id)
     query = _query(args)
     rows = fetch(query, client)
@@ -175,6 +220,10 @@ def search(member, args: dict, brief: dict | None = None, client=None) -> dict:
         title = _clean(row["title"], 160)
         if not title:
             continue
+        if args.get('kind') == 'flight':
+            directions = [route_direction(text, route) for text in (title, url)]
+            if 'reverse' in directions or 'forward' not in directions:
+                continue
         price = find_price(row["title"] + " " + row["content"])
         cents, unit, matched = price if price else (None, "", "")
         estimate = per_person_estimate(cents, unit, group_size, n_nights, args.get("kind", "other"))
@@ -195,13 +244,22 @@ def search(member, args: dict, brief: dict | None = None, client=None) -> dict:
             "disclaimer": DISCLAIMER}
 
 
+def sanitize_offer(data):
+    """Apply current fare rules to old stored offers/plan snapshots too."""
+    if data.get('kind') == 'flight':
+        data = {**data, 'est_per_person_cents':data.get('price_cents') if data.get('price_unit') in {'person','each'} else None,
+                'fits_budget':None, 'price_note':'Advertised fare only. Dates, passenger coverage, baggage and round-trip pricing are not verified.'}
+    return data
+
+
 def offer_json(o: LiveOffer, budget_cents: int | None = None) -> dict:
-    return {"offer_id": str(o.id), "label": o.label, "kind": o.kind, "title": o.title, "url": o.url, "source": o.source,
+    return sanitize_offer({"offer_id": str(o.id), "label": o.label, "kind": o.kind, "title": o.title, "url": o.url, "source": o.source,
             "snippet": o.snippet, "price_cents": o.price_cents, "price_unit": o.price_unit or None,
             "price_text": o.price_text or None, "est_per_person_cents": o.est_per_person_cents,
-            "fits_budget": (o.est_per_person_cents <= budget_cents) if budget_cents is not None and o.est_per_person_cents is not None else None,
+            "fits_budget": (o.est_per_person_cents <= budget_cents) if o.kind != 'flight' and budget_cents is not None and o.est_per_person_cents is not None else None,
+            "price_note": "Advertised fare only. Dates, passenger coverage, baggage and round-trip pricing are not verified." if o.kind == 'flight' else None,
             "retrieved_at": o.created_at.isoformat().replace("+00:00", "Z") if o.created_at else None,
-            "live": True, "checkout_ready": False}
+            "live": True, "checkout_ready": False})
 
 
 def latest(group, revision: str | None = None) -> list[LiveOffer]:

@@ -56,6 +56,10 @@ def handle(orchestrator, actor, text):
     session = PhotonSession.objects.filter(member__group=orchestrator.group).first()
     if session is None:
         return None
+    from agent.dialogue import pending
+    question = pending(orchestrator.group.id)
+    if re.fullmatch(r'\s*\d+(?:\.\d+)?[.!]?\s*', text) and question and question.get('answer_type') != 'selection':
+        return None
     text = text.strip().rstrip('.!').strip()
     options = current_options(orchestrator.group, session)
     offers = current_live_offers(orchestrator.group, session)
@@ -75,6 +79,8 @@ def handle(orchestrator, actor, text):
         selected = next((o for o in options if o['rank'] == number), None)
         if selected is None:
             if not options:
+                if not re.search(r'pick|choose|option|number|select|first|second|third', text, re.I) and session.planning_state.get('_dialogue'):
+                    return None
                 return [AgentMessage(text='I don’t have current options to pick from yet. Tell me what you’re buying, or say “find options” for your saved plan. 🔎')]
             return [AgentMessage(text='That number isn’t on this shortlist. Pick '+', '.join(str(o['rank']) for o in options)+', or send the option’s name.')]
     else:

@@ -54,6 +54,8 @@ def post_card(group_id, message: AgentMessage) -> str:
     log_event(EventType.AGENT_MESSAGE_SENT, actor="agent", group_id=group_id,
               payload={"message_id": message_id, "card": message.card.type if message.card else None,
                        "private": bool(message.private_to_member_id)})
+    from agent.dialogue import remember_question
+    remember_question(group_id, message)
     return message_id
 
 
@@ -78,8 +80,11 @@ def store_inbound(msg: InboundMessage) -> ChatMessage:
         recent = ChatMessage.objects.filter(group_id=msg.group_id, direction="in", created_at__gte=since).count()
         if recent >= MAX_MESSAGES_PER_MIN:
             raise RateLimited()
-        return ChatMessage.objects.create(group_id=msg.group_id, member_id=msg.member_id, direction="in",
+        stored = ChatMessage.objects.create(group_id=msg.group_id, member_id=msg.member_id, direction="in",
                                           text_redacted=redact(msg.text), channel=msg.channel, seq=seq)
+        from agent.dialogue import remember_answer
+        remember_answer(msg.group_id, stored.text_redacted, stored.seq)
+        return stored
 
 
 def handle_inbound(msg: InboundMessage) -> ChatMessage:

@@ -383,6 +383,10 @@
               }
             },
             "description": "Public agreed plan: useful itinerary, logistics, recipient preferences or decision rationale. Only confirmed facts or clearly labeled suggestions. No private data, invented prices, availability or URLs; source links are attached by server."
+          },
+          "new_goal": {
+            "type": "boolean",
+            "description": "True only when the user starts a DIFFERENT purchase. Defaults to partial update. Flights and lodging within a trip are the same goal. Never true for yes/no, a place name, count or budget answer."
           }
         }
       }
@@ -476,6 +480,45 @@
                 "maxLength": 10
               }
             }
+          },
+          "route": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "origin",
+              "destination"
+            ],
+            "properties": {
+              "origin": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 80
+              },
+              "destination": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 80
+              },
+              "origin_airport": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 3
+              },
+              "destination_airport": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 3
+              },
+              "trip_type": {
+                "type": "string",
+                "enum": [
+                  "round_trip",
+                  "one_way",
+                  "unspecified"
+                ]
+              }
+            },
+            "description": "Required for flight searches: confirmed origin and destination. Airport codes when known. Dates must be supplied separately; do not assume a fare matches those dates."
           }
         }
       }

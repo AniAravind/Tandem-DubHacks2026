@@ -91,7 +91,7 @@ class Orchestrator:
         from chat.models import PhotonSession
         from purchases import live
         session = PhotonSession.objects.filter(member__group=self.group).first()
-        brief = session.planning_state if session else {}
+        brief = session.planning_state if session and session.planning_state.get('goal') else {}
         lines = ["No demo-catalog offer matched" + (f" {brief['goal']}." if brief else " that search.")]
         if live.configured():
             lines.append("Say “search the web” and I’ll pull real listings to compare.")
@@ -114,9 +114,9 @@ class Orchestrator:
             lines.append("You can still reply " + ", ".join(str(o["rank"]) for o in options) + " to pick from your shortlist.")
         elif session and current_live_offers(self.group, session):
             lines.append("You can still reply with a letter from the web results to start a planning page.")
-        elif session and session.planning_state:
-            lines.append(f"Say “find options” to rerun the saved search for {session.planning_state['goal']}.")
-        if session and session.planning_state:
+        elif session and session.planning_state.get('goal'):
+            lines.append('Your saved planning details are kept. I’ll need the AI provider to resume research.')
+        if session and session.planning_state.get('goal'):
             lines.append("Say “send me the link” for your plan page.")
         return "\n".join(lines)
 
@@ -128,7 +128,7 @@ class Orchestrator:
         from purchases.models import TripPlan
         from chat.models import PhotonSession
         session = PhotonSession.objects.filter(member__group=self.group).first()
-        brief = session.planning_state if session else {}
+        brief = session.planning_state if session and session.planning_state.get('goal') else {}
         options = latest_options_json(self.group)['options']
         if brief:
             options = [o for o in options if o['meta'].get('brief_revision') == brief.get('revision')]
@@ -157,6 +157,21 @@ class Orchestrator:
         from chat.models import PhotonSession
         if not PhotonSession.objects.filter(member__group=self.group).exists():
             return None
+        session = PhotonSession.objects.get(member__group=self.group)
+        brief = session.planning_state
+        from purchases.briefs import explicit_buyer_count
+        latest = ChatMessage.objects.filter(group=self.group,direction='in').order_by('-seq').values_list('text_redacted',flat=True).first() or ''
+        if not brief.get('goal') and (explicit_buyer_count(latest) is not None or safety.planning_amounts_in(latest)):
+            return 'Save the substantive buying request with save_buying_brief before asking a follow-up. Preserve the user-provided traveler count and budget. Then ask only the next missing detail.'
+        from agent.dialogue import question_type
+        if '?' in text:
+            redundant_budget = (brief.get('budget_per_person_cents') is not None
+                and re.search(r'confirm[^?]{0,100}budget|budget[^?]{0,100}confirm', text, re.I)
+                and not re.search(r'include|cover|flight.only|hotel|total versus|per.person or total', text, re.I))
+            if redundant_budget:
+                return 'The budget is already explicitly confirmed in current_buying_brief. Do not ask to confirm it again. Apply the latest answer to conversation_context and call the relevant search/save tool, or ask only a different genuinely missing detail.'
+            if question_type(text) == 'count' and brief.get('_buyer_count_confirmed'):
+                return 'The total buyer count is already confirmed in current_buying_brief. Preserve it and move to the next genuinely missing detail or execute the relevant search tool.'
         if (_LINK_CLAIM.search(text) or re.search(r'https?://\S+/p/', text)) and not any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
             return 'No plan link has been created. Search actual options if needed, then call publish_plan. Never claim a link exists without successful publication.'
         if (re.search(r'search', text, re.I) and re.search(r'only you|only (?:one|1)|(?:one|1)[ -]?(?:active )?member', text, re.I)
@@ -391,7 +406,7 @@ class Orchestrator:
     def private_next_step(self):
         from chat.models import PhotonSession
         session = PhotonSession.objects.filter(member__group=self.group).first()
-        brief = session.planning_state if session else {}
+        brief = session.planning_state if session and session.planning_state.get('goal') else {}
         if brief:
             if brief.get('budget_per_person_cents') is None:
                 return f"For {brief['goal']} with {brief['group_size']} buyer(s), what budget should I use per buyer?"
@@ -464,7 +479,7 @@ class Orchestrator:
                 from purchases.plans import owner_url
                 plan = TripPlan.objects.filter(pk=data.get('plan_id'), source_group=self.group).first()
                 if plan:
-                    featured = next((o for o in plan.details.get('live_offers') or [] if o['label'] == plan.details.get('featured_offer')), None)
+                    featured = next((o for o in plan.details.get('live_offers') or [] if o['offer_id'] == plan.details.get('featured_offer_id')), None) or next((o for o in plan.details.get('live_offers') or [] if o['label'] == plan.details.get('featured_offer')), None)
                     if plan.selected_option_id:
                         note = 'Each buyer approves their own payment on the website; payments are simulated.'
                     elif featured:

@@ -126,6 +126,8 @@ def live_offers_text(d: dict) -> str:
         estimate = f" · about {usd(o['est_per_person_cents'])} each" if o.get("est_per_person_cents") is not None else ""
         fit = " · fits your budget" if o.get("fits_budget") else ""
         lines += [f"{o['label']}. {o['title']}", f"{_listed(o)} on {o['source']}{estimate}{fit}", o["url"], ""]
+    if any(o.get("kind") == "flight" for o in d["offers"]):
+        lines.append("Flight fares are advertised prices only: dates, passenger coverage, baggage and round-trip pricing need checking on the source.\n")
     lines.append("Real listings, not Tandem quotes: prices can change and checkout isn’t available for these. "
                  "Reply with a letter to put one on your planning page, or say “compare A and B”.")
     return "\n".join(lines)
