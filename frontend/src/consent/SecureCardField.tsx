@@ -31,7 +31,7 @@ export default function SecureCardField({
         />
       </div>
       <p id={`${id}-help`} className="fine">
-        Test cards only: 4111 1111 1111 1111 approves, a number ending 0002 declines. Only the last 4 digits leave this field.
+        Demo: 4111 1111 1111 1111 approves, …0002 declines.
       </p>
     </section>
   );

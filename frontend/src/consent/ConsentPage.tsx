@@ -23,7 +23,7 @@ import {
   type ConsentRequestError,
 } from "./api";
 import { formatUsd, last4FromPan } from "./money";
-import { Mark, Icon } from "../components/layout/AppShell";
+import { Mark } from "../components/layout/AppShell";
 import "./consent.css";
 
 type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden" | "locked" | "captured" | "released" | "refunded";
@@ -284,19 +284,17 @@ export default function ConsentPage() {
         <div className="consent-form-grid">
           <div className="consent-col">
             <section className="consent-intro" aria-labelledby="consent-title">
-              <p className="eyebrow">PRIVATE TO YOU · YOUR PERMISSION</p>
-              <h1 id="consent-title">Hi {data.member.display_name}. Approve only your share.</h1>
+              <h1 id="consent-title">Hi {data.member.display_name}, here’s your share.</h1>
               <p className="consent-invitation">
                 {data.invited_by && data.invited_by !== data.member.display_name ? `${data.invited_by} invited you to ` : "You’re organizing "}
-                <strong>{data.group_name}</strong>. Nobody fronts the total, and nobody is charged unless everyone is in.
+                <strong>{data.group_name}</strong>.
               </p>
-              <ListingHero title={data.purchase.title} photoUrl={data.purchase.photo_url} />
+              <ListingHero photoUrl={data.purchase.photo_url} />
               <h2 className="consent-listing-title">{data.purchase.title}</h2>
               <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")}</p>
             </section>
             <section className="consent-promises" aria-label="What Tandem can and can never do">
               <CanCanNever can={data.can} canNever={data.can_never} />
-              <div className="consent-trust"><Icon name="shield" /><span>Your consent belongs to you. Leave anytime before booking and your hold is released.</span></div>
             </section>
           </div>
 
