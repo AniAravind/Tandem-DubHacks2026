@@ -128,6 +128,29 @@ class LiveSearchTests(TestCase):
         self.assertIn("not Tandem quotes", out[0].text)
         self.assertEqual(out[0].card.type, "LiveOffersCard")
 
+    def test_discovery_rejects_premature_publication_and_returns_real_links(self):
+        for request in ("Give me ideas of what to buy", "Recommend options for a weekend trip",
+                        "What could I get for my home office?"):
+            with self.subTest(request=request):
+                responses = iter([
+                    reply(calls=[tool_call('publish_buying_plan', {})]),
+                    reply(calls=[tool_call('live_search', {'query': 'Tahoe cabin rental', 'kind': 'stay', 'group_size': 6})]),
+                ])
+                def model(*args, **kwargs):
+                    return next(responses)
+                self.say(request)
+                out = Orchestrator(self.group.id, llm_chat=model).run(self.actor, text=request)
+                self.assertIn('https://www.vrbo.com/2023227312345678ha', out[0].text)
+                self.assertFalse(TripPlan.objects.filter(source_group=self.group).exists())
+
+    def test_publication_does_not_hide_researched_links(self):
+        result = self.search()
+        self.assertTrue(result['ok'], result)
+        orchestrator = Orchestrator(self.group.id)
+        orchestrator.tool_results = [('live_search', result['data']), ('publish_buying_plan', {})]
+        out = orchestrator.compose(None)
+        self.assertIn('https://www.vrbo.com/2023227312345678ha', out[0].text)
+
     def test_letter_reply_features_offer_on_planning_page_without_payment(self):
         self.search()
         self.say("B")

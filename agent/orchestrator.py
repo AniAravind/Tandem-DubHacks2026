@@ -84,6 +84,7 @@ class Orchestrator:
         self.link_request_actor = None
         self.provider_retry_after = None
         self.provider_invalid_tools = False
+        self.discovery_requested = False
         self.succeeded: set[tuple[str, str]] = set()
 
     def no_match_text(self):
@@ -207,6 +208,9 @@ class Orchestrator:
 
     def run_tool(self, name: str, raw_args: str, actor: str) -> dict:
         self.tool_attempts += 1
+        if self.discovery_requested and name in {'publish_plan', 'publish_buying_plan'}:
+            return self._reject(name, 'discovery_first',
+                'The user asked for options, not a plan link. Use live_search for real listings matching their requirements and total budget, and present the results in chat. Do not publish this turn.')
         if name not in TOOL_NAMES:
             return self._reject(name, "unknown_tool", "Only the listed tools exist.")
         try:
@@ -316,6 +320,8 @@ class Orchestrator:
             r'(?:send|resend|give|create|make|generate|share)(?:\s+(?:me|us))?(?:\s+(?:a|the|my|our))?'
             r'(?:\s+(?:private|organizer|group|plan|invite|shared|trip))*\s+link)(?:\s+please)?[.!?]?\s*', text, re.I))
         explicit_link_request = short_link_request or bool(re.search(r'\b(?:create|make|generate|send|share|give|want|need|where)[^.!?\n]{0,80}\b(?:link|invite)\b|\bpublish (?:it|the|a|my|this|our)\b', text, re.I))
+        self.discovery_requested = private and not explicit_link_request and bool(re.search(
+            r'\bideas\b|\brecommend(?:ations| something)?\b|\boptions\b|what (?:to|should (?:I|we)|can (?:I|we)|could (?:I|we)) (?:buy|get)', text, re.I))
         if explicit_link_request and PhotonSession.objects.filter(member__group=self.group).exists():
             self.link_request_actor = actor
             if short_link_request and self.publish_requested_proposal(reuse_published=True):
@@ -434,7 +440,7 @@ class Orchestrator:
             self.publish_requested_proposal()
         presenting = [(name, data) for name, data in self.tool_results
                       if name in {'search_options', 'live_search', 'compare_options'}]
-        if any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
+        if any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results) and not any(name == 'live_search' for name, data in presenting):
             # Sharing instructions and organizer credentials belong to the
             # server-generated private attachment, never model narration.
             text = None
