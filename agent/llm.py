@@ -1,8 +1,9 @@
 import logging
+import hashlib
 import os
 import time
 
-from openai import OpenAI, RateLimitError
+from openai import OpenAI, RateLimitError, BadRequestError
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,9 @@ def retry_after_s(exc: RateLimitError) -> float:
 
 
 def _cooldown_key(model: str) -> str:
-    return "llm:cooldown:" + model
+    identity = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1") + "|" + os.getenv("XAI_API_KEY", "")
+    fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:16]
+    return "llm:cooldown:" + fingerprint + ":" + model
 
 
 def cooling_until(model: str) -> float:
@@ -82,6 +85,12 @@ def chat(messages: list[dict], tools: list[dict], tool_choice: str = "auto"):
         try:
             return client.chat.completions.create(model=model, messages=messages, tools=tools, tool_choice=tool_choice,
                                                   temperature=0.2, parallel_tool_calls=False, **_extra(model))
+        except BadRequestError as exc:
+            # Rejected generations never executed. Let an independent model regenerate
+            # from the original context; never parse or execute failed_generation.
+            if exc.code != "tool_use_failed" or model == models()[-1]:
+                raise
+            log.warning("AI model %s generated an invalid tool call; trying fallback", model)
         except RateLimitError as exc:
             wait = retry_after_s(exc)
             log.warning("AI model %s rate limited for %.0fs", model, wait)

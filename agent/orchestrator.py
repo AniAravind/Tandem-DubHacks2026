@@ -83,6 +83,7 @@ class Orchestrator:
         self.tool_attempts = 0
         self.link_request_actor = None
         self.provider_retry_after = None
+        self.provider_invalid_tools = False
         self.succeeded: set[tuple[str, str]] = set()
 
     def no_match_text(self):
@@ -109,6 +110,8 @@ class Orchestrator:
         wait = self.provider_retry_after
         when = (f" for about {max(1, round(wait / 60))} min" if wait and wait >= 90 else "")
         lines = [f"My AI provider is busy{when}, so I can’t read new requests yet. Your message is saved and no payment changed."]
+        if self.provider_invalid_tools:
+            lines = ["I couldn’t turn that request into a valid action. Please try rephrasing it. Your message is saved and no payment changed."]
         options = current_options(self.group, session) if session else []
         if options:
             lines.append("You can still reply " + ", ".join(str(o["rank"]) for o in options) + " to pick from your shortlist.")
@@ -248,6 +251,7 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ LLM loop
     def _call(self, messages: list[dict], **kw):
+        self.provider_invalid_tools = False
         from chat.models import PhotonSession
         tools = TOOLS
         if PhotonSession.objects.filter(member__group=self.group).exists():
@@ -273,6 +277,7 @@ class Orchestrator:
                     time.sleep(max(1, delay) + 0.1)
             except BadRequestError as exc:
                 if exc.code == "tool_use_failed":
+                    self.provider_invalid_tools = True
                     # Provider validation occurs before a tool reaches our loop.
                     # Give the next attempt corrective context; never execute or
                     # echo the provider's untrusted failed_generation payload.

@@ -10,7 +10,8 @@ from unittest.mock import patch
 from django.core.cache import cache
 from django.core.management import call_command
 from django.test import TestCase, override_settings
-from openai import RateLimitError
+from openai import RateLimitError, BadRequestError
+import httpx
 
 from agent import llm
 from agent.llm import ProviderUnavailable
@@ -155,6 +156,23 @@ def _rate_limit(seconds):
 class ModelFallbackTests(TestCase):
     def setUp(self):
         cache.clear()
+
+    def test_rejected_tool_generation_uses_fallback(self):
+        rejected = BadRequestError("Invalid tool call", response=httpx.Response(400,
+            request=httpx.Request("POST", "https://provider.invalid")),
+            body={"code": "tool_use_failed", "failed_generation": "untrusted"})
+        seen, client = self.fake({"a": [rejected]})
+        with patch.object(llm, "client", client), patch.object(llm, "MODEL", "a"), \
+                patch.object(llm, "FALLBACK_MODELS", ["b"]):
+            self.assertEqual(llm.chat([], []).model, "b")
+        self.assertEqual([m for m, *_ in seen], ["a", "b"])
+
+    def test_key_rotation_does_not_inherit_old_cooldown(self):
+        with patch.dict("os.environ", {"XAI_API_KEY": "old"}):
+            llm.cool_down("a", 600)
+            self.assertGreater(llm.cooling_until("a"), 0)
+        with patch.dict("os.environ", {"XAI_API_KEY": "new"}):
+            self.assertEqual(llm.cooling_until("a"), 0)
 
     def fake(self, outcomes):
         seen = []

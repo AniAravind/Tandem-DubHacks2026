@@ -88,6 +88,8 @@ class OrchestratorTest(TestCase):
         self.assertEqual([m.text for m in out], [FAILURE_TEXT])
         self.assertEqual(len(llm.requests), 2)
         self.assertEqual(o.tool_results, [])
+        self.assertIn("valid action", o.unavailable_text())
+        self.assertNotIn("provider is busy", o.unavailable_text())
 
     def test_search_budget_schema_explicitly_uses_dollars(self):
         from agent.orchestrator import SCHEMAS
