@@ -1,3 +1,4 @@
+import { useDialog } from "../components/layout/useDialog";
 import { formatUsd } from "./money";
 
 export default function ReconfirmSheet({
@@ -7,8 +8,9 @@ export default function ReconfirmSheet({
   onConfirm: () => void; onLeave: () => void; onClose: () => void;
 }) {
   const over = toCents > capCents;
+  const dialog = useDialog(onClose);
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="reconfirm-title">
+    <div ref={dialog} className="sheet" role="dialog" aria-modal="true" aria-labelledby="reconfirm-title">
       <div className="sheet-card">
         <h2 id="reconfirm-title">{over ? "New limit needed" : "Confirm your new share"}</h2>
         {over ? (

@@ -1,3 +1,4 @@
+import { useDialog } from "../components/layout/useDialog";
 const REASONS = [
   { id: "too_expensive", label: "Too expensive" },
   { id: "dates", label: "Dates don't work" },
@@ -10,8 +11,9 @@ export default function DeclineSheet({
 }: {
   onPick: (reason: string) => void; onClose: () => void;
 }) {
+  const dialog = useDialog(onClose);
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="decline-title">
+    <div ref={dialog} className="sheet" role="dialog" aria-modal="true" aria-labelledby="decline-title">
       <div className="sheet-card">
         <h2 id="decline-title">Not for me</h2>
         <p className="muted">This reason stays private. The group only sees that a spot opened up.</p>

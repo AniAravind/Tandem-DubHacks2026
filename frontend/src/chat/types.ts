@@ -29,4 +29,6 @@ export interface Group {
   name: string;
   timezone: string;
   members: GroupMember[];
+  current_member_id?: string;
+  can_switch_member?: boolean;
 }

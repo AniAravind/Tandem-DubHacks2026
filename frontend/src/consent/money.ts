@@ -11,3 +11,9 @@ export function offerCents(offers: { percent_back?: number }[] | undefined, shar
   const pct = offers?.[0]?.percent_back ?? 0;
   return Math.round((shareCents * pct) / 100);
 }
+
+
+export function last4FromPan(pan: string): string {
+  const digits = pan.replace(/\D/g, "");
+  return digits.slice(-4).padStart(4, "0");
+}

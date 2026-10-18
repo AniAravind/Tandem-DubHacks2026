@@ -6,7 +6,7 @@ import type { ChatMessage } from "./types";
 function linkify(text: string): ReactNode[] {
   return text.split(/(\s+)/).map((part, i) =>
     /^(https?:\/\/\S+|\/(c|g|p|chat)\/\S+)$/.test(part)
-      ? <a key={i} href={part}>{part.startsWith("/c/") ? "Open my private link →" : part}</a>
+      ? <a key={i} href={part} title={part}>{/\/c\//.test(part) ? "Open private consent page →" : "Open link ↗"}</a>
       : <Fragment key={i}>{part}</Fragment>);
 }
 
@@ -38,6 +38,7 @@ export function MessageList({ messages, meId, onReply, consentUrl, onDemoShare }
         const who = m.direction === "out" ? "Tandem" : m.member?.display_name ?? "Someone";
         return (
           <li key={m.id} className={`msg ${m.direction === "out" ? "agent" : mine ? "mine" : "member"}${m.private ? " private" : ""}`}>
+            <span className="message-initial" aria-hidden="true">{m.direction === "out" ? "t." : who.slice(0,1)}</span>
             {m.text ? (
               <div className="bubble">
                 <span className="who">{who}{m.private ? " · only you see this" : ""}</span>

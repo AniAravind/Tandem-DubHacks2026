@@ -85,8 +85,15 @@ def _as_list_of_text(value, field: str) -> list:
 @api_view(["GET"])
 @api_errors
 def group_detail(request, gid):
-    current_member(request, gid)
-    return Response(ser.group_json(get_object_or_404(Group, pk=gid)))
+    member = current_member(request, gid)
+    payload = ser.group_json(get_object_or_404(Group, pk=gid))
+    if request.query_params.get("include") in ("current_purchase", "workspace"):
+        latest = Purchase.objects.filter(group_id=gid).order_by("-created_at").first()
+        payload["current_purchase_id"] = str(latest.id) if latest else None
+    if request.query_params.get("include") == "workspace":
+        payload["current_member_id"] = str(member.id)
+        payload["can_switch_member"] = settings.DEMO_MODE and member_id_from_request(request) is None
+    return Response(payload)
 
 
 @api_view(["GET", "PUT"])
