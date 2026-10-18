@@ -224,6 +224,50 @@ class ConsentApiTests(TestCase):
         self.assertEqual(fresh.amount_cents, share.amount_cents)
         self.assertEqual(fresh.cap_cents, 21000)
 
+    @override_settings(DEMO_MODE=True)
+    def test_decline_reports_attempts_left_and_payload_tracks_it(self):
+        _, token, _ = build_purchase("Jordan")
+        resp = self._approve(token, last4="0002")
+        self.assertEqual(resp.json()["error"]["attempts_left"], 2)
+        body = self.client.get(f"/api/v1/consent/{token}").json()
+        self.assertEqual((body["share_status"], body["attempts_left"]), ("card_failed", 2))
+
+    @override_settings(DEMO_MODE=True)
+    def test_third_decline_locks_further_attempts(self):
+        _, token, _ = build_purchase("Jordan")
+        for _ in range(3):
+            self.assertEqual(self._approve(token, last4="0002").status_code, 402)
+        resp = self._approve(token, last4="1111")
+        self.assertEqual(resp.status_code, 429)
+        self.assertEqual(resp.json()["error"]["code"], "too_many_declines")
+
+    @override_settings(DEMO_MODE=True)
+    def test_share_above_budget_needs_and_allows_a_new_limit(self):
+        share, token, member = build_purchase("Sam")
+        share.amount_cents = 21_000
+        share.save(update_fields=["amount_cents"])
+        body = self.client.get(f"/api/v1/consent/{token}").json()
+        self.assertTrue(body["above_budget"])
+        self.assertEqual(body["default_cap_cents"], 21_000)
+        self.assertEqual(self._approve(token, last4="1111", cap=21_000).status_code, 200)
+
+    @override_settings(DEMO_MODE=True)
+    def test_unknown_agent_token_records_no_consent(self):
+        from payments.models import Consent
+        _, token, _ = build_purchase("Alex")
+        payload = self.client.get(f"/api/v1/consent/{token}?cap_cents=21000").json()
+        resp = self.client.post(f"/api/v1/consent/{token}/approve", {
+            "agent_token_id": "atk_sim_missing", "cap_cents": 21000,
+            "consent_text_sha256": payload["consent_text_sha256"], "assertion": OTP}, format="json")
+        self.assertEqual(resp.status_code, 409)
+        self.assertFalse(Consent.objects.exists())
+
+    def test_payload_reports_group_progress(self):
+        _, token, _ = build_purchase("Alex")
+        body = self.client.get(f"/api/v1/consent/{token}").json()
+        self.assertEqual(body["purchase_state"], "collecting")
+        self.assertEqual(body["group_counts"], {"held": 0, "active": 6})
+
     def test_spaced_pan_in_unexpected_field_rejected(self):
         _, token, _ = build_purchase("Alex")
         response = self.client.post(f"/api/v1/consent/{token}/tokenize",

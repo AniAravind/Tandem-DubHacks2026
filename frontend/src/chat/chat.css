@@ -99,3 +99,62 @@
 .signed-in{font-size:11px;color:var(--ink-600)}.signed-in strong{font-weight:550;color:var(--ink-900)}
 
 .message-initial img{width:23px;height:23px;object-fit:contain}.bubble p+p{margin-top:12px}.message-title{font-size:15px;font-weight:650;line-height:1.5}
+
+/* ---------- readable sizes, color, and offer cards ---------- */
+.chat-page { font-size: 15px; }
+.bubble { font-size: 15px; line-height: 1.65; }
+.who { font-size: 12px; }
+.chat-header .eyebrow, .chat-welcome .eyebrow { font-size: 11px; color: var(--tandem-600); }
+.chat-header p.muted, .signed-in, .switcher { font-size: 13px; }
+.card { border-radius: 14px; box-shadow: var(--shadow-sm); }
+.card p { font-size: 14px; line-height: 1.6; }
+.card .fine { font-size: 12px; }
+.card .btn, .chat-page .btn { font-size: 14px; border-radius: 10px; min-height: 44px; }
+.chip { font-size: 14px; min-height: 44px; border-radius: 10px; }
+.composer input { font-size: 15px; }
+.typing { font-size: 13px; }
+.vote-choice, .fallback-choice { font-size: 14px; border-radius: 10px; }
+.why h4 { font-size: 11px; }
+.why li { font-size: 14px; line-height: 1.6; }
+.why li.tradeoff > span { color: var(--pending-700); }
+.card-demo { font-size: 11px; padding: 2px 6px; border-radius: 4px; color: var(--ink-600); }
+
+.option-card { padding: 0 0 18px; overflow: hidden; }
+.option-card > :not(.option-media) { margin-left: 20px; margin-right: 20px; }
+.option-card.top-pick { border-color: var(--tandem-100); box-shadow: 0 0 0 3px var(--tandem-50), var(--shadow-sm); }
+.option-media { position: relative; margin-bottom: 14px; }
+.option-media .option-photo { display: block; width: 100%; aspect-ratio: 16 / 8; margin: 0; border-radius: 0; object-fit: cover; }
+.option-photo-fallback { display: grid; place-items: center; background: var(--hero); color: rgba(255, 255, 255, .9); font-size: 44px; font-weight: 700; }
+.option-media .rank { position: absolute; top: 12px; left: 12px; font-size: 12px; font-weight: 650; color: var(--ink-900); background: rgba(255, 255, 255, .92); border-radius: 999px; padding: 4px 10px; }
+.top-pick .option-media .rank { background: var(--tandem-600); color: #fff; }
+.option-card .card-title { font-size: 18px; }
+.option-card .option-merchant { display: flex; align-items: center; gap: 8px; color: var(--ink-600); margin-top: 2px; margin-bottom: 0; }
+.option-card .per-person { margin-top: 10px; padding: 8px 0 12px; }
+.option-card .per-person strong { font-size: 32px; color: var(--ink-900); }
+.option-card .muted { font-size: 13px; }
+.feature-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin-top: 12px; margin-bottom: 0; }
+.feature-chips li { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--tandem-50); color: var(--tandem-700); }
+.fit-meter { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--ink-600); }
+.fit-track { flex: 1; height: 6px; border-radius: 999px; background: var(--canvas); overflow: hidden; }
+.fit-track span { display: block; height: 100%; background: linear-gradient(90deg, var(--tandem-600), var(--sunrise-400)); }
+.fit-value { font-weight: 650; color: var(--ink-900); }
+.option-card .card-actions .btn { width: 100%; }
+
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin: 4px 0;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--tandem-600);
+  color: #fff !important;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.link-chip:hover { background: var(--tandem-700); }
+.link-chip.kind-g, .link-chip.kind-chat { background: var(--surface); color: var(--tandem-600) !important; border: 1px solid var(--tandem-100); }
+.msg.private .bubble { border-color: var(--tandem-100); }
+.tone-pending .avatar-glyph { color: var(--pending-700); }
