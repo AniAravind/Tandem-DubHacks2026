@@ -182,3 +182,34 @@ class ConversationStateTests(TestCase):
         self.assertTrue(self.state()['_buyer_count_confirmed'])
         self.input('6 people')
         self.assertEqual(self.state()['group_size'],6)
+
+    def test_confirmed_headcount_does_not_block_dates_preferences_or_budget(self):
+        original='3 friends and me. Whole package'
+        self.input(original)
+        self.assertTrue(self.engine.execute('save_buying_brief',{'goal':'Hawaii trip','category':'travel',
+            'group_size':4,'new_goal':True,'group_size_evidence':'3 friends and me','research_kinds':['flight','stay','activity']},self.actor)['ok'])
+        for text,extra in [
+            ('Thanksgiving break, 25th to 30th',{'decision_details':[{'topic':'Dates','value':'2026-11-25 to 2026-11-30'}]}),
+            ('SeaTac. Nice hotel. Adventure themes',{'decision_details':[{'topic':'Origin','value':'SEA'},{'topic':'Activities','value':'Adventure'}]}),
+            ('A beachfront resort w a pool',{'requirements':['beachfront resort','pool']}),
+            ('1000 per person',{'budget_per_person':1000}),
+        ]:
+            self.input(text)
+            result=self.engine.execute('save_buying_brief',{'goal':'Hawaii trip','category':'travel','group_size':4,
+                'group_size_evidence':original,**extra},self.actor)
+            self.assertTrue(result['ok'],result)
+        state=self.state()
+        self.assertEqual(state['group_size'],4)
+        self.assertEqual(state['budget_per_person_cents'],100000)
+        self.assertEqual(state['budget_total_cents'],400000)
+        self.assertIn('pool',state['requirements'])
+        self.assertEqual({d['topic'] for d in state['decision_details']},{'Dates','Origin','Activities'})
+        self.assertFalse(self.save(group_size=5)['ok'])
+
+    def test_wrong_headcount_in_narration_is_repaired_without_reasking(self):
+        self.input('SeaTac')
+        model=ScriptedLLM(reply('What budget works for the five of you?'),reply('What budget works for the four of you?'))
+        out=Orchestrator(self.group.id,llm_chat=model).run(self.actor,text='SeaTac')
+        self.assertIn('four of you',out[0].text)
+        self.assertNotIn('five of you',out[0].text)
+        self.assertEqual(self.state()['group_size'],4)

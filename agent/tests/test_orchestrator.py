@@ -8,7 +8,7 @@ from django.test import TestCase
 
 from agent.context import build_messages
 from agent.fakes import FakeRulesEngine
-from agent.orchestrator import FAILURE_TEXT, SYSTEM_PROMPT, Orchestrator
+from agent.orchestrator import FAILURE_TEXT, SYSTEM_PROMPT, MAX_TOOL_CALLS, Orchestrator
 from agent.tests.helpers import ScriptedLLM, reply, seed, tool_call
 from agent.validate import validate
 from core.models import EventLog, Group, Member
@@ -141,9 +141,9 @@ class OrchestratorTest(TestCase):
         self.assertEqual(EventLog.objects.count(), before)
 
     def test_tool_call_limit_per_turn(self):
-        o, llm = self.orch(*[reply(calls=[tool_call("check_status", {})]) for _ in range(6)], reply("ok"))
+        o, llm = self.orch(*[reply(calls=[tool_call("check_status", {})]) for _ in range(MAX_TOOL_CALLS+2)], reply("ok"))
         o.run(self.actor)
-        self.assertLessEqual(EventLog.objects.filter(type__startswith="agent.tool").count(), 4)
+        self.assertLessEqual(EventLog.objects.filter(type__startswith="agent.tool").count(), MAX_TOOL_CALLS)
 
     def test_only_one_money_tool_per_step(self):
         engine = FakeRulesEngine(self.group.id)

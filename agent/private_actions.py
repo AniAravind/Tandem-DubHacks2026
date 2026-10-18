@@ -29,11 +29,11 @@ def current_live_offers(group, session):
 
 
 _COMPARE = re.compile(r'(?:please\s+)?compare\s+(?:options?\s+)?(.+)', re.I)
-_LETTER = re.compile(r'(?:(?:option|pick|choose|select|go with|let[’\']s do|i want|i choose)\s+)?([A-Ea-e])', re.I)
+_LETTER = re.compile(r'(?:(?:option|pick|choose|select|go with|let[’\']s do|i want|i choose)\s+)?([A-Ha-h])', re.I)
 
 
 def _compare(orchestrator, actor, text, options, offers):
-    refs = re.findall(r'\b(\d|[A-Ea-e])\b', text)
+    refs = re.findall(r'\b(\d|[A-Ha-h])\b', text)
     if len(refs) < 2:
         return None
     ids, labels = [], []

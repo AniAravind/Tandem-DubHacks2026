@@ -107,6 +107,9 @@ UNIT_SUFFIX = {"night": "/night", "person": " per person", "each": " each"}
 
 def live_offers_card(d: dict) -> Card:
     """Shape documented in docs/live-offer-contract.md (LiveOffersCard)."""
+    if d.get('curated'):
+        d={**d,'offers':[{**row,'title':'Flight search · '+row['source'],'price_cents':None,'price_text':None,
+            'est_per_person_cents':None,'snippet':''} if row.get('kind')=='flight' else row for row in d['offers']]}
     return Card("LiveOffersCard", {"search_id": d["search_id"], "query": d["query"], "offers": d["offers"],
                                    "disclaimer": d["disclaimer"], "live": True, "checkout_ready": False})
 
@@ -138,13 +141,21 @@ def recommendations_text(data):
         return 'I couldn’t verify a useful match from those results. I need better sources before recommending one.'
     lines=['I’d start with these:', '']
     for row in data['offers']:
-        lines.append(f"{row['label']}. {row['title']}")
-        if row['evidence'] != row['title']:
+        title='Flight search · '+row['source'] if row.get('kind')=='flight' else row['title']
+        lines.append(f"{row['label']}. {title}")
+        if row.get('kind')!='flight' and row['evidence'] != row['title']:
             lines.append(f"From the source: “{row['evidence']}”")
-        if row.get('price_cents') is not None:
+        if row.get('price_cents') is not None and row.get('kind')!='flight' and (row.get('kind') != 'stay' or row.get('price_unit') == 'night'):
             lines.append(_listed(row)+' on '+row['source'])
         lines += [row['url'],'']
-    lines.append('Listed prices and availability still need checking on the linked pages. Which one should I build the plan around?')
+    missing=data.get('missing_components') or []
+    if missing:
+        names={'flight':'flight','stay':'lodging','activity':'activity','product':'product','other':'other'}
+        lines += ['I still need reliable '+', '.join(names.get(kind,kind) for kind in missing)+' options to complete this plan.','']
+    note='Check final prices, availability and required features on the linked pages.'
+    if any(row.get('kind') == 'flight' for row in data['offers']):
+        note+=' Flight fares for your travel dates have not been verified.'
+    lines.append(note+' Which one should I build the plan around?')
     return '\n'.join(lines)
 
 
@@ -170,6 +181,10 @@ def compare_text(d: dict) -> str:
                 bits.append(f"about {usd(r['per_person_cents'])} each")
             bits.append(f"{r['source']}, web only")
         lines.append(" · ".join(bits))
+        if r.get("url"):
+            lines.append(r["url"])
+    if any(r.get("price_note") for r in d["rows"]):
+        lines.append("Advertised flight fares are not verified round-trip prices for your dates, passengers or baggage.")
     lines.append("")
     if d.get("cheapest_ref"):
         lines.append(f"Lowest per person: {d['cheapest_ref']}.")

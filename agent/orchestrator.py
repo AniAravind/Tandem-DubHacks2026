@@ -29,7 +29,7 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in TOOLS}
 SYSTEM_PROMPT = (pathlib.Path(__file__).parent / "prompts" / "system.md").read_text()
 
-MAX_TOOL_CALLS = 4
+MAX_TOOL_CALLS = 8
 MAX_REPAIRS = 2
 PRIVATE_TOOLS = {"search_options", "publish_plan", "save_buying_brief", "publish_buying_plan", "live_search",
                  "compare_options", "remember_preference", "present_recommendations"}
@@ -62,12 +62,16 @@ def _ids_in_args(tool: str, args: dict) -> tuple[set[str], set[str]]:
 
 
 class Orchestrator:
-    def __init__(self, group_id, engine=None, llm_chat=None):
+    def __init__(self, group_id, engine=None, llm_chat=None, fact_reader=None):
         self.group = Group.objects.get(pk=group_id)
         self.engine = engine or get_engine(group_id)
         if llm_chat is None:
             from agent.llm import chat as llm_chat
         self.llm_chat = llm_chat
+        self.fact_reader = fact_reader
+        if self.fact_reader is None and settings.PRIVATE_LIVE_ONLY and getattr(llm_chat,'__module__','') == 'agent.llm':
+            from agent.facts import read
+            self.fact_reader=read
         self.tool_results: list[tuple[str, dict]] = []     # successful (tool, data) this turn, for cards + output filter
         self.tool_attempts = 0
         self.link_request_actor = None
@@ -156,6 +160,14 @@ class Orchestrator:
         latest = ChatMessage.objects.filter(group=self.group,direction='in').order_by('-seq').values_list('text_redacted',flat=True).first() or ''
         if not brief.get('goal') and (explicit_buyer_count(latest) is not None or safety.planning_amounts_in(latest)):
             return 'Save the substantive buying request with save_buying_brief before asking a follow-up. Preserve the user-provided traveler count and budget. Then ask only the next missing detail.'
+        if brief.get('_buyer_count_confirmed'):
+            numbers={'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,
+                     'eleven':11,'twelve':12,'thirteen':13,'fourteen':14,'fifteen':15,'sixteen':16,'seventeen':17,'eighteen':18,'nineteen':19,'twenty':20}
+            claims=re.findall(r'\b(?:the|all)\s+(\d{1,2}|'+ '|'.join(numbers) +r')\s+of\s+(?:you|us)\b',text,re.I)
+            for claim in claims:
+                claimed=int(claim) if claim.isdigit() else numbers[claim.casefold()]
+                if claimed != brief.get('group_size'):
+                    return 'The confirmed total headcount is '+str(brief['group_size'])+'. Correct the reply without changing that stored count or asking the user to confirm it again.'
         from agent.dialogue import question_type
         if '?' in text:
             redundant_budget = (brief.get('budget_per_person_cents') is not None
@@ -322,6 +334,9 @@ class Orchestrator:
             direct = handle(self, actor, text)
             if direct is not None:
                 return direct
+        if private and text and self.fact_reader:
+            from agent.facts import capture
+            capture(self.group,actor,self.fact_reader)
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
         from chat.models import PhotonSession
         short_link_request = bool(re.fullmatch(

@@ -199,6 +199,17 @@ class ModelFallbackTests(TestCase):
             with self.assertRaises(ValueError): llm._structured_recovery('a',[],[],'auto')
             with self.assertRaises(ValueError): llm._structured_recovery('a',[],[{'function':{'name':'charge_card'}}],'none')
 
+    def test_final_reply_uses_content_only_schema_without_native_tools(self):
+        requests=[]
+        response=SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(content='{"content":"Your dates are saved. What is your budget?"}'))])
+        client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw:requests.append(kw) or response)))
+        with patch.object(llm,'client',client),patch.object(llm,'MODEL','openai/gpt-oss-120b'),patch.object(llm,'_GROQ',True):
+            result=llm.chat([{'role':'user','content':'Continue'}],[{'function':{'name':'save_buying_brief'}}],tool_choice='none')
+        self.assertIsNone(result.choices[0].message.tool_calls)
+        self.assertIn('dates are saved',result.choices[0].message.content)
+        self.assertNotIn('tools',requests[0])
+        self.assertEqual(requests[0]['response_format']['json_schema']['schema']['required'],['content'])
+
     def test_key_rotation_does_not_inherit_old_cooldown(self):
         with patch.dict("os.environ", {"XAI_API_KEY": "old"}):
             llm.cool_down("a", 600)
@@ -223,7 +234,7 @@ class ModelFallbackTests(TestCase):
             self.assertEqual(llm.chat([], []).model, "openai/gpt-oss-20b")
             self.assertEqual(llm.chat([], []).model, "openai/gpt-oss-20b")     # primary is skipped while cooling
         self.assertEqual([m for m, *_ in seen], ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-20b"])
-        self.assertEqual(seen[0][1:], ("low", llm.MAX_OUTPUT_TOKENS))
+        self.assertEqual(seen[0][1:], (llm.REASONING_EFFORT, llm.MAX_OUTPUT_TOKENS))
 
     def test_every_model_exhausted_raises_with_soonest_retry(self):
         seen, client = self.fake({"a": [_rate_limit(600)], "b": [_rate_limit(120)]})

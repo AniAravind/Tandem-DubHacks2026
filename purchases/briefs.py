@@ -19,6 +19,9 @@ def explicit_buyer_count(text):
     friends = re.search(r'\b(?:me|myself|I)\s+and\s+(\d+)\s+(?:friends|others)\b', text, re.I)
     if friends:
         return int(friends.group(1)) + 1
+    reverse = re.search(r'\b(\d+)\s+(?:friends|others)\s+and\s+(?:me|myself|I)\b', text, re.I)
+    if reverse:
+        return int(reverse.group(1)) + 1
     buyers = re.search(r'\b(\d+)\s+buyers\b', text, re.I)
     if buyers:
         return int(buyers.group(1))
@@ -28,7 +31,7 @@ def explicit_buyer_count(text):
 
 
 @transaction.atomic
-def save(member, args):
+def save(member, args, *, verified_facts=False, fact_seq=None):
     from purchases.rules import RuleError
     session = PhotonSession.objects.select_for_update().filter(member=member).first()
     if session is None:
@@ -45,10 +48,14 @@ def save(member, args):
             raise RuleError('request_source_missing', 'source_message_seq must identify a user message in this chat.')
     source_text = source.text_redacted if source else ''
     previous = dict(session.planning_state)
+    if verified_facts and fact_seq is not None and fact_seq < previous.get('_facts_recorded_seq',0):
+        raise RuleError('stale_fact_update','A newer user message has already been recorded.')
     category = canonical_category(args['category'])
     old_category = previous.get('category')
     travel = category in TRAVEL_CATEGORIES and old_category in TRAVEL_CATEGORIES
     changing = bool(previous.get('goal')) and (args.get('new_goal') is True or (category != old_category and not travel))
+    if not verified_facts and previous.get('_facts_recorded_seq') == (message.seq if message else None):
+        changing = False
     short_reply = bool(re.fullmatch(r'\s*(?:yes|no|confirmed|correct|okay|ok|sure|\d+(?:\.\d+)?)\s*[.!]?\s*', latest, re.I))
     if changing and source and source.seq <= previous.get('_request_seq', 0):
         raise RuleError('stale_request_source', 'A new goal must come from a newer user request, not an older completed goal.')
@@ -57,6 +64,10 @@ def save(member, args):
     base = {} if changing else previous
     count = explicit_buyer_count(latest) or (explicit_buyer_count(source_text) if changing or not previous.get('goal') else None)
     evidence = args.get('group_size_evidence', '').strip()
+    # Unchanged confirmed counts do not need to be proved again on every detail update.
+    needs_evidence = count is None and (not base.get('_buyer_count_confirmed') or args['group_size'] != base.get('group_size'))
+    if not needs_evidence:
+        evidence = ''
     if evidence and ' '.join(evidence.casefold().split()) not in ' '.join(source_text.casefold().split()):
         raise RuleError('buyer_count_evidence_missing', 'group_size_evidence must quote the source user message exactly.')
     if count is not None and args['group_size'] != count:
@@ -102,7 +113,8 @@ def save(member, args):
     if any('http' in v.lower() for section in sections for v in section.values()):
         raise RuleError('unverified_offer', 'Keep plan sections as plain text. Source links are attached from real search results by the server.')
     details = {item['topic'].casefold():item for item in base.get('decision_details', [])}
-    for item in args.get('decision_details', []):
+    incoming_details = args.get('decision_details', []) if verified_facts or not base.get('_verified_context') else []
+    for item in incoming_details:
         details[item['topic'].casefold()] = {key:redact(value) for key,value in item.items()}
     state = {**base, '_request_seq':base.get('_request_seq') or (source.seq if source else 0), 'goal':base.get('goal') or redact(args['goal']), 'category':base.get('category') or category,
              'group_size':count or (args['group_size'] if evidence else None) or (base.get('group_size') if base.get('_buyer_count_confirmed', True) else None) or args['group_size'],
@@ -111,15 +123,21 @@ def save(member, args):
              'budget_total_cents':round(total * 100) if total is not None else round(budget * 100) * args['group_size'] if budget is not None else base.get('budget_total_cents'),
              'budget_basis':'total' if total is not None else 'per_person' if budget is not None else base.get('budget_basis'),
              'summary':redact(args.get('summary', base.get('summary', ''))),
-             'requirements':[redact(v) for v in args.get('requirements', base.get('requirements', []))],
+             'requirements':[redact(v) for v in (base.get('requirements',[]) if base.get('_verified_context') and not verified_facts else args.get('requirements',base.get('requirements',[])))],
              'recommendations':[redact(v) for v in recommendations], 'decision_details':list(details.values()),
              'open_questions':[redact(v) for v in args.get('open_questions', base.get('open_questions', []))],
              'research_kinds':list(dict.fromkeys(args.get('research_kinds', base.get('research_kinds', [])))),
              'plan_sections':[{key:redact(value) for key,value in item.items()} for item in sections]}
+    if verified_facts:
+        state['_verified_context']=True
+        state['_facts_recorded_seq']=fact_seq if fact_seq is not None else (message.seq if message else 0)
     revision = base.get('revision')
     constraints = ('category', 'group_size', 'budget_per_person_cents', 'budget_total_cents', 'requirements', 'decision_details')
     unchanged = all(base.get(key) == state.get(key) for key in constraints)
     state['revision'] = revision if unchanged and revision else uuid.uuid4().hex
+    if state['revision'] != revision:
+        for derived in ('_recommendation_ids','_recommendation_revision','research_status'):
+            state.pop(derived,None)
     session.planning_state = state
     session.save(update_fields=['planning_state'])
     return public_brief(state)

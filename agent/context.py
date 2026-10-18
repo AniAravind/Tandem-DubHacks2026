@@ -4,6 +4,7 @@ from collections import Counter
 from zoneinfo import ZoneInfo
 
 from django.utils import timezone
+from django.conf import settings
 
 from chat.models import ChatMessage
 from core.models import Group
@@ -11,7 +12,7 @@ from purchases.models import Purchase, Vote
 
 MAX_MESSAGES = 50
 PRIVATE_PROMPT = '''You are tandem, a resourceful personal assistant for buying decisions, for one person or a group.
-Work out what the user wants from the latest request and conversation, then choose the tools and questions that advance it. There is no prescribed sequence of tools. Inspect results, refine poor searches, compare useful choices, save relevant facts, and finish when the user's request is actually answered. A tool succeeding is not by itself task completion.
+Work out what the user wants from the latest request and conversation, then choose the tools and questions that advance it. There is no prescribed sequence of tools. Inspect results, refine poor searches, compare useful choices, save relevant facts, and finish when the user's request is actually answered. A tool succeeding is not by itself task completion. Keep all parts of the requested scope active: a single component does not complete a multi-part plan. Do not ask the user to pick a scope they have already specified. Facts already recorded through facts_recorded_through_seq are authoritative; do not re-derive, overwrite or re-save them. Save any missing new dates, origin, preferences and budget as partial updates to the same goal; omit unchanged group_size_evidence. A total trip budget covers the combined components, not each component separately. Do not promise future work or say a plan will be ready in a few minutes unless an actual background job was created. Ask for essential missing information directly, and identify research limitations honestly.
 The local catalog is demo data, not real-world inventory. In a live private chat, use live_search for recommendations and publish_buying_plan for sharing; never substitute catalog fixtures when web research fails. For real-world buying recommendations, provide relevant actual items and their retrieved source URLs in the chat. Do the research now when tools are available; do not substitute generic suggestions, news stories, discussion posts, or a promise to search later for useful purchasing options. Use focused queries based on the user's interests and constraints. After researching, use present_recommendations to choose a concise shortlist rather than echoing all search hits. Select direct, relevant products, properties or providers and select the evidence_choices passage supporting their fit. Skip social posts, irrelevant news and generic guides when actual options are available; refine searches if they are not. Recommend paid extras only when the user asks for them or they materially serve the goal; a planning request does not automatically mean guided tours. Explain why the relevant choices fit, including tradeoffs. Never invent products, prices, URLs, stock, or availability. Distinguish a source's advertised price from a verified quote. If research fails, state that honestly.
 The provided group_state and tool results are authoritative; newer tool results supersede earlier state. The current_buying_brief stores confirmed requirements; conversation_context links short replies to the actual last question. Use what the user already supplied, and ask only questions essential to making progress. When asked for ideas or recommendations, uncertainty about optional preferences is a reason to offer a varied shortlist, not to withhold suggestions. Research and answer with the available constraints; you can invite refinement afterward. For a planning request, produce a useful first draft from known constraints and label assumptions; optional style, amenities, and preferences can refine it afterward. Do not stall research waiting for must-haves. If a reply gives useful information other than what you asked, capture it and advance rather than repeating the question. Ask first only when a missing fact prevents useful or safe research, and explain why it matters. Infer clearly stated buyer counts, including those expressed through relationships rather than numerals; cite the exact supporting phrase as group_size_evidence when saving them instead of asking for redundant confirmation. One private member never prevents planning for the intended number of buyers. A recipient is not automatically a buyer. Save a newly stated buying goal and its supplied facts before asking a follow-up, even when an older brief exists. If recovering a goal stated earlier in the transcript, pass its seq as source_message_seq so the server can verify those facts. Respond to greetings naturally; they do not erase or restart the plan. Keep the brief aligned with the current goal; do not carry budgets, dates, or options into a different goal without confirmation. Preserve durable preferences through the provided memory tool.
 Budget tool inputs are USD dollars; *_cents outputs are cents. Pass a user-stated combined amount as budget_total; pass budget_per_person only when that is how the user stated it. Let the server calculate splits. A search budget is not payment authorization. Cite prices only from source results and quote user budgets as budgets, never as verified product prices.
@@ -37,16 +38,14 @@ def missing_details(brief: dict) -> list[str]:
     if 'open_questions' in brief and (brief.get('decision_details') or brief.get('research_kinds')):
         return brief['open_questions']
     missing = []
-    text = " ".join([brief.get("goal", ""), brief.get("summary", ""), *brief.get("requirements", [])]).lower()
+    text = " ".join([brief.get("goal", ""), brief.get("summary", ""), *brief.get("requirements", []), *(d.get("value","") for d in brief.get("decision_details",[]))]).lower()
     travel = brief.get("category", "").lower() in TRAVEL_CATEGORIES
     if travel and not any(w in text for w in ("nov", "dec", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
                                               "sep", "oct", "weekend", "night", "-", "/")):
         missing.append("dates")
-    if travel and not brief.get("requirements") and len(brief.get("goal", "").split()) < 3:
-        missing.append("destination")
     if brief.get("budget_per_person_cents") is None:
         missing.append("budget per buyer")
-    if not travel and not brief.get("requirements"):
+    if not travel and not brief.get("requirements") and not brief.get("decision_details"):
         missing.append("one or two must-haves (recipient, style, size, or use)")
     return missing
 
@@ -75,8 +74,12 @@ def build_group_state(group: Group, engine=None, event: dict | None = None) -> d
     session = PhotonSession.objects.filter(member__group=group).first()
     if session:
         state['mode'] = 'private_planning'
+        if getattr(settings,'PRIVATE_LIVE_ONLY',False):
+            state.pop('members',None)
+            state.pop('must_have_counts',None)
         from agent.dialogue import pending, public_brief
         state['current_buying_brief'] = public_brief(session.planning_state)
+        state['facts_recorded_through_seq']=session.planning_state.get('_facts_recorded_seq')
         state['conversation_context'] = pending(group.id)
         state['confirmed_fields'] = {'group_size':session.planning_state.get('_buyer_count_confirmed', False), 'budget':session.planning_state.get('budget_per_person_cents') is not None}
         state['planning_instructions'] = 'Plan for the intended buyer count, not the one person in this private conversation. Once the user agrees on an option, publish_plan creates a separate website group. Never start a vote or collect payment here.'
@@ -88,10 +91,11 @@ def build_group_state(group: Group, engine=None, event: dict | None = None) -> d
             if not session.planning_state or o['meta'].get('brief_revision') == session.planning_state.get('revision')]
         from purchases import live
         revision = session.planning_state.get('revision') if session.planning_state else None
+        from agent.private_actions import current_live_offers
         state['live_results'] = [
             {'label': o.label, 'title': o.title, 'source': o.source, 'price_text': o.price_text or None,
              'est_per_person_cents': live.offer_json(o)['est_per_person_cents']}
-            for o in live.latest(group, revision)]
+            for o in current_live_offers(group,session)]
         state['research_results'] = [live.offer_json(o) for o in live.for_plan(group, revision)]
         state['live_search_available'] = live.configured()
         state['remembered_preferences'] = (session.member.prefs or {}).get('remembered', [])
@@ -129,7 +133,7 @@ def transcript(group: Group, *, user_only=False) -> str:
         # Earlier assistant errors are not planning facts. Current options and
         # publications come from the database, while user requirements persist.
         query = query.filter(direction='in')
-    msgs = list(query.select_related("member").order_by("-seq")[:12 if user_only else MAX_MESSAGES])[::-1]
+    msgs = list(query.select_related("member").order_by("-seq")[:MAX_MESSAGES])[::-1]
     rows = [{"from": "tandem" if m.direction == "out" else handle(m.member.display_name if m.member else "unknown"),
              "seq": m.seq, "text": m.text_redacted} for m in msgs if not (m.direction == "out" and m.member_id)]   # skip private DMs
     body = json.dumps(rows, ensure_ascii=False)

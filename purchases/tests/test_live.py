@@ -101,7 +101,7 @@ class LiveSearchTests(TestCase):
         self.assertTrue(self.search()["ok"])
         self.assertTrue(self.search()["ok"])
         self.assertEqual(len(self.fake.calls), 1)                      # identical query served from cache
-        for _ in range(3):
+        for _ in range(live.PER_GROUP_10_MIN - 2):
             self.search(query="Tahoe cabin different query " + _ * "x")
         self.assertEqual(self.search(query="one more")["error"]["code"], "rate_limited")
         cache.clear()

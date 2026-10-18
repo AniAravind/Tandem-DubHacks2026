@@ -11,6 +11,8 @@ from purchases.tests import test_plans
 from purchases.tests.test_live import FakeTavily
 
 
+@patch('purchases.live.check_sources',new=lambda rows:{row['offer_id']:{'actionable':True,'reason':'Fixture source'} for row in rows})
+@patch('purchases.recommendations.classify',new=lambda rows:{row['offer_id']:{'actionable':True,'reason':'Fixture property'} for row in rows})
 @override_settings(PRIVATE_LIVE_ONLY=True, CACHES={'default':{'BACKEND':'django.core.cache.backends.locmem.LocMemCache'}})
 class LiveOnlyTests(TestCase):
     def setUp(self):
@@ -124,5 +126,61 @@ class LiveOnlyTests(TestCase):
         self.assertIn('Sleeps 6.',out[0].text)
         self.assertNotIn('internal search query',out[0].text)
         self.assertNotIn('Tahoe cabins guide',out[0].text)
-        self.assertEqual(out[0].text.count('Listed prices and availability'),1)
+        self.assertEqual(out[0].text.count('Check final prices, availability'),1)
         self.assertEqual(sum(m.card is not None for m in out),1)
+
+    def test_guide_and_news_pages_cannot_be_published_as_recommendations(self):
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            result=self.engine.execute('live_search',{'query':'cabin','kind':'stay','group_size':4},self.actor)
+        guide=result['data']['offers'][-1]
+        with patch('purchases.recommendations.classify',return_value={guide['offer_id']:{'actionable':False,'reason':'General guide, not a property'}}):
+            selected=self.engine.execute('present_recommendations',{'selections':[{'offer_id':guide['offer_id'],'evidence_index':0}]},self.actor)
+        self.assertEqual(selected['error']['code'],'not_actionable_source')
+
+    def test_shortlist_can_retain_an_option_from_an_earlier_query(self):
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            first=self.engine.execute('live_search',{'query':'cabin first query','kind':'stay','group_size':4},self.actor)
+            self.engine.execute('live_search',{'query':'cabin refined query','kind':'stay','group_size':4},self.actor)
+        chosen=first['data']['offers'][0]['offer_id']
+        selected=self.engine.execute('present_recommendations',{'selections':[{'offer_id':chosen,'evidence_index':1}]},self.actor)
+        self.assertTrue(selected['ok'],selected)
+        from purchases import live
+        self.assertEqual(str(live.for_plan(self.source,None)[0].id),chosen)
+
+    def test_bad_source_does_not_hide_valid_options_or_claim_a_complete_package(self):
+        from chat.models import PhotonSession
+        session=PhotonSession.objects.get(member=self.owner)
+        session.planning_state={'research_kinds':['flight','stay','activity']}
+        session.save()
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            result=self.engine.execute('live_search',{'query':'cabin','kind':'stay','group_size':4},self.actor)
+        good,guide=result['data']['offers'][0],result['data']['offers'][-1]
+        verdicts={good['offer_id']:{'actionable':True,'reason':'Property'},guide['offer_id']:{'actionable':False,'reason':'Editorial guide'}}
+        with patch('purchases.recommendations.classify',return_value=verdicts):
+            result=self.engine.execute('present_recommendations',{'selections':[{'offer_id':good['offer_id'],'evidence_index':1},{'offer_id':guide['offer_id'],'evidence_index':0}]},self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(len(result['data']['offers']),1)
+        self.assertEqual(result['data']['missing_components'],['activity','flight'])
+
+    def test_editorial_search_hits_are_filtered_before_the_planner_sees_them(self):
+        def classify(rows):
+            return {row['offer_id']:{'actionable':'guide' not in row['title'].lower(),'reason':'Page purpose'} for row in rows}
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()),patch('purchases.live.check_sources',side_effect=classify):
+            result=self.engine.execute('live_search',{'query':'cabin','kind':'stay','group_size':4},self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertFalse(any('guide' in row['title'].lower() for row in result['data']['offers']))
+        self.assertFalse(any('guide' in row['title'].lower() for row in build_group_state(self.source)['research_results']))
+
+    def test_undated_flight_ads_do_not_look_like_fares_for_the_requested_dates(self):
+        from agent import cards
+        data={'curated':True,'search_id':'shortlist','query':'','disclaimer':'unverified','offers':[{
+            'offer_id':'test','label':'A','kind':'flight','title':'$255 Flights in December','source':'airline.example',
+            'url':'https://airline.example/sea/hnl','evidence':'Depart December 7, from $255',
+            'price_cents':25500,'price_unit':'listed','price_text':'$255','est_per_person_cents':None}]}
+        text=cards.recommendations_text(data)
+        self.assertIn('https://airline.example/sea/hnl',text)
+        self.assertNotIn('$255',text)
+        self.assertNotIn('December 7',text)
+        self.assertIn('Flight fares for your travel dates have not been verified',text)
+        card=cards.live_offers_card(data)
+        self.assertIsNone(card.data['offers'][0]['price_cents'])

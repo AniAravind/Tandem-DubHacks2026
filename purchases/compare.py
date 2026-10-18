@@ -36,7 +36,7 @@ def _live_row(o) -> dict:
     return {"kind": "live", "ref": o.label, "id": str(o.id), "title": o.title, "source": o.source,
             "per_person_cents": o.est_per_person_cents, "total_cents": None, "price_cents": o.price_cents,
             "price_text": o.price_text or None,
-            "features": [], "cancellation": "", "url": o.url, "checkout_ready": False, "demo_data": False}
+            "features": [], "cancellation": "", "url": o.url, "price_note":live.offer_json(o).get("price_note"), "checkout_ready": False, "demo_data": False}
 
 
 def compare(member, args: dict) -> dict:

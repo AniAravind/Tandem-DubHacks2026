@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 
 import httpx
 from django.core.cache import cache
+from django.conf import settings
+from agent.source_quality import classify as check_sources, remember as remember_quality, known as known_quality
 from django.utils import timezone
 
 from chat.services import redact
@@ -25,10 +27,10 @@ from purchases.models import LiveOffer
 log = logging.getLogger(__name__)
 
 TAVILY_URL = "https://api.tavily.com/search"
-LABELS = "ABCDE"
+LABELS = "ABCDEFGH"
 CACHE_S = 6 * 3600                       # identical searches reuse results (and quota) for six hours
 DAILY_MAX = int(os.getenv("LIVE_SEARCH_DAILY_MAX", "60"))
-PER_GROUP_10_MIN = 4
+PER_GROUP_10_MIN = int(os.getenv("LIVE_SEARCH_GROUP_10_MIN", "12"))
 DISCLAIMER = "Live web results, not Tandem quotes. Prices are as listed on the source and can change. Checkout isn’t available for these."
 
 _PRICE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{1,6})(?:\.(\d{2}))?(\s*(?:/|per|a)\s*(night|nt|person|guest|pp|each|ticket|day))?", re.I)
@@ -240,7 +242,14 @@ def search(member, args: dict, brief: dict | None = None, client=None) -> dict:
         for i, offer in enumerate(offers):
             offer.label = LABELS[i]
     LiveOffer.objects.bulk_create(offers)
-    return {"search_id": search_id, "query": query, "offers": [offer_json(o, budget) for o in offers],
+    result_rows=[offer_json(o,budget) for o in offers]
+    from chat.models import PhotonSession
+    if settings.PRIVATE_LIVE_ONLY and PhotonSession.objects.filter(member=member).exists() and result_rows:
+        verdicts=check_sources(result_rows)
+        if verdicts is not None:
+            remember_quality(result_rows,verdicts)
+            result_rows=[row for row in result_rows if verdicts[row['offer_id']]['actionable']]
+    return {"search_id": search_id, "query": query, "offers": result_rows,
             "disclaimer": DISCLAIMER}
 
 
@@ -272,19 +281,41 @@ def offer_json(o: LiveOffer, budget_cents: int | None = None) -> dict:
             "live": True, "checkout_ready": False})
 
 
+def visible_sources(rows):
+    if not settings.PRIVATE_LIVE_ONLY:
+        return rows
+    result=[]
+    for offer in rows:
+        verdict=known_quality({'kind':offer.kind,'title':offer.title,'url':offer.url,'snippet':offer.snippet})
+        if verdict is None or verdict['actionable']:
+            result.append(offer)
+    return result
+
+
 def latest(group, revision: str | None = None) -> list[LiveOffer]:
     """The group's most recent live search, optionally only if it belongs to the current buying brief."""
     newest = LiveOffer.objects.filter(group=group).order_by("-created_at").first()
     if newest is None or (revision is not None and newest.brief_revision != revision):
         return []
-    return list(LiveOffer.objects.filter(group=group, search_id=newest.search_id).order_by("label"))
+    return visible_sources(list(LiveOffer.objects.filter(group=group, search_id=newest.search_id).order_by("label")))
 
 
 def for_plan(group, revision):
-    """Keep the latest search for EACH requested component in the current brief."""
+    """Use the selected shortlist, or the latest search for each component before selection."""
+    from chat.models import PhotonSession
+    session=PhotonSession.objects.filter(member__group=group).first()
+    state=session.planning_state if session else {}
+    if '_recommendation_ids' in state and state.get('_recommendation_revision')==revision:
+        rows={str(o.id):o for o in LiveOffer.objects.filter(group=group,brief_revision=revision or '',id__in=state['_recommendation_ids'])}
+        selected=[]
+        for key in state['_recommendation_ids']:
+            if key in rows:
+                rows[key].label=chr(65+len(selected))
+                selected.append(rows[key])
+        return selected
     rows = LiveOffer.objects.filter(group=group, brief_revision=revision or '').order_by('-created_at')
     batches, result = {}, []
-    for offer in rows[:150]:
+    for offer in visible_sources(list(rows[:150])):
         batches.setdefault(offer.kind, offer.search_id)
         if batches[offer.kind] == offer.search_id:
             result.append(offer)

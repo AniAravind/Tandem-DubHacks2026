@@ -162,7 +162,7 @@ class BuyingTests(TestCase):
         state = PhotonSession.objects.get(member=self.owner).planning_state
         self.assertTrue(state['_buyer_count_confirmed'])
         self.assertEqual(state['budget_per_person_cents'],6000)
-        result = self.engine.execute('save_buying_brief',{**args,'new_goal':False,'group_size_evidence':'an invented phrase'},self.actor)
+        result = self.engine.execute('save_buying_brief',{**args,'new_goal':False,'group_size':3,'group_size_evidence':'an invented phrase'},self.actor)
         self.assertEqual(result['error']['code'],'buyer_count_evidence_missing')
 
     def test_new_goal_can_be_recovered_from_cited_request_after_followups(self):
