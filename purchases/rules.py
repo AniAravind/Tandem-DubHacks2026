@@ -332,7 +332,7 @@ def check_funded(purchase_id) -> dict:
 def _run_checkout(purchase_id) -> None:
     from purchases import tasks
     try:
-        result = checkout(purchase_id)
+        result = checkout(purchase_id) or {}
     except Exception:                                     # noqa: BLE001  (logged; the purchase stays funded)
         log.exception("checkout failed for purchase %s", purchase_id)
         result = {"status": "rejected", "reason": "merchant_error"}
