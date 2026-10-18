@@ -20,7 +20,7 @@ S = Share.Status
 # Payload keys that must never be shown on the dashboard, even if some code logged them by mistake.
 FORBIDDEN_KEY_PARTS = ("budget", "phone")                      # dropped if the key CONTAINS these
 FORBIDDEN_KEYS = ("pan", "card_number", "cvv", "otp", "otp_code",   # dropped only if the key IS one of these
-                  "cap", "mandate_remaining_cents")                  # a member's cap can hint at their private budget
+                  "cap", "cap_cents", "default_cap_cents", "max_amount_cents", "mandate_remaining_cents")                  # a member's cap can hint at their private budget
 
 
 def iso(dt) -> str | None:
@@ -135,9 +135,16 @@ def ledger_json(group: Group) -> dict:
 
 # ---------------------------------------------------------------- events
 def _clean_payload(payload: dict) -> dict:
-    """Defense in depth: drop anything that looks private before it reaches a browser."""
-    return {k: v for k, v in (payload or {}).items()
-            if k.lower() not in FORBIDDEN_KEYS and not any(bad in k.lower() for bad in FORBIDDEN_KEY_PARTS)}
+    """Remove private fields at every depth before exposing an event to the group."""
+    def clean(value):
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()
+                    if k.lower() not in FORBIDDEN_KEYS
+                    and not any(bad in k.lower() for bad in FORBIDDEN_KEY_PARTS)}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+    return clean(payload or {})
 
 
 def _summary(e: EventLog, names: dict) -> str:

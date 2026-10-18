@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, useRef } from "react";
+import { useEffect, useId, useState, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import CanCanNever from "./CanCanNever";
 import DeclineSheet from "./DeclineSheet";
@@ -7,7 +7,7 @@ import HeldSuccess from "./HeldSuccess";
 import MandateBox from "./MandateBox";
 import PasskeyConfirm from "./PasskeyConfirm";
 import ReconfirmSheet from "./ReconfirmSheet";
-import SecureCardField, { last4FromPan } from "./SecureCardField";
+import SecureCardField from "./SecureCardField";
 import ShareSummary from "./ShareSummary";
 import {
   DEMO_OTP,
@@ -20,7 +20,9 @@ import {
   type Assertion,
   type ConsentPayload,
 } from "./api";
-import { formatUsd } from "./money";
+import { formatUsd, last4FromPan } from "./money";
+import { Link } from "react-router-dom";
+import { Mark, Icon } from "../components/layout/AppShell";
 import "./consent.css";
 
 type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden" | "captured" | "released" | "refunded";
@@ -40,17 +42,17 @@ export default function ConsentPage() {
   const [message, setMessage] = useState("");
   const errorId = useId();
   const cardToken = useRef<{last4: string; transient: string; id?: string} | null>(null);
-  function applyStatus(payload: ConsentPayload) {
+  const applyStatus = useCallback((payload: ConsentPayload) => {
     setData(payload);
     const status = payload.share_status;
     setScreen(status === "held" ? "held" : status === "captured" ? "captured" : status === "released" ? "released" : status === "refunded" ? "refunded" : status === "declined" ? "declined" : "form");
-  }
-  async function refresh() { applyStatus(await getConsent(token)); }
+  }, []);
+  const refresh = useCallback(async () => { applyStatus(await getConsent(token)); }, [token, applyStatus]);
   useEffect(() => {
     if (screen !== "held") return;
     const timer = setInterval(() => { refresh().catch(() => undefined); }, 2000);
     return () => clearInterval(timer);
-  }, [screen, token]);
+  }, [screen, token, refresh]);
 
   useEffect(() => {
     let alive = true;
@@ -67,7 +69,7 @@ export default function ConsentPage() {
         setScreen(err.status === 403 ? "forbidden" : "expired");
       });
     return () => { alive = false; };
-  }, [token]);
+  }, [token, applyStatus]);
 
   async function place(assertion: Assertion) {
     if (!data) return;
@@ -121,15 +123,14 @@ export default function ConsentPage() {
 
   async function onDecline(reason: string) {
     setShowDecline(false);
-    await declineConsent(token, reason);
-    setScreen("declined");
+    try { await declineConsent(token, reason); setScreen("declined"); } catch (err) { setError(err instanceof Error ? err.message : "Couldn’t update your choice. Try again."); }
   }
 
   return (
-    <div className="consent-page">
+    <main className="consent-page">
       <header className="consent-header">
-        <span className="wordmark">tandem</span>
-        <span className="sim-badge">🧪 SIMULATED PAYMENT</span>
+        <Link to="/" className="brand"><Mark/><span>tandem<span className="brand-period">.</span></span></Link>
+        <span className="sim-badge">SIMULATED PAYMENT</span>
       </header>
 
       {screen === "loading" && (
@@ -159,20 +160,21 @@ export default function ConsentPage() {
       )}
 
       {screen === "form" && data && (
-        <>
-          <p>Hi {data.member.display_name} 👋 You&apos;re invited by {data.invited_by} to: {data.group_name}</p>
+        <div className="consent-form-grid"><section className="consent-details">
+          <p className="eyebrow">YOUR PLAN. YOUR PERMISSION.</p><h1>A great trip starts<br/>with everyone in.</h1>
+          <p className="consent-invitation">Hi {data.member.display_name}. {data.invited_by === data.member.display_name ? "You’re organizing" : `${data.invited_by} invited you to`} <strong>{data.group_name}</strong>.</p>
+          <div className="mobile-share-summary"><ShareSummary data={data}/></div>
           {data.purchase.photo_url && (
-            <img className="listing-photo" src={data.purchase.photo_url} alt="" />
+            <img className="listing-photo" src={data.purchase.photo_url} alt="" onError={e=>{e.currentTarget.style.display="none";}} />
           )}
-          <h1>{data.purchase.title}</h1>
-          <p className="muted">{data.purchase.dates} · {data.purchase.merchant_name}</p>
+          <h2 className="consent-listing-title">{data.purchase.title}</h2>
+          <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")}</p>
           <p className="muted">Simulated payment: no real money moves in this demo. Use test cards.</p>
-          <ShareSummary data={data} />
+          <CanCanNever can={data.can} canNever={data.can_never} /><div className="consent-trust"><Icon name="shield"/><span>Your consent belongs to you. You can leave before booking.</span></div></section><section className="consent-review" aria-label="Review and approve your share"><ShareSummary data={data} />
           {data.offers[0] && (
             <p>Offer applied: −{formatUsd(Math.round((data.share_cents * data.offers[0].percent_back) / 100))} (simulated)</p>
           )}
           <MandateBox data={data} cap={cap} onCap={(value) => { setCap(value); getConsent(token, value).then(setData).catch(() => undefined); }} />
-          <CanCanNever can={data.can} canNever={data.can_never} />
           <SecureCardField pan={pan} onPan={setPan} errorId={error ? errorId : undefined} />
           {error && (
             <p className="error" id={errorId} tabIndex={-1} role="alert">
@@ -180,15 +182,14 @@ export default function ConsentPage() {
             </p>
           )}
           <div className="consent-actions">
-            <button className="btn btn-primary" type="button" disabled={busy} onClick={startApprove}>
+            <button className="btn consent-approve" type="button" disabled={busy} onClick={startApprove}>
               {busy ? "Placing hold…" : `Approve & hold ${formatUsd(data.share_cents)}`}
             </button>
             {needOtp && <PasskeyConfirm busy={busy} onAssert={place} />}
             <button className="btn" type="button" disabled={busy} onClick={() => setShowDecline(true)}>Not for me</button>
             <p className="muted">Leave anytime before booking.</p>
-            {data.reconfirmation?.available ? <button className="btn" type="button" onClick={() => setShowReconfirm(true)}>Review changed share</button> : <p className="muted">Share changes require a new private link and fresh consent. Reconfirmation is awaiting the backend integration.</p>}
-          </div>
-        </>
+            {data.reconfirmation?.available ? <button className="btn" type="button" onClick={() => setShowReconfirm(true)}>Review changed share</button> : data.reconfirmation ? <p className="muted">Your updated share isn’t ready to confirm yet. Please check back shortly.</p> : null}
+          </div></section></div>
       )}
 
       {showDecline && <DeclineSheet onPick={onDecline} onClose={() => setShowDecline(false)} />}
@@ -212,6 +213,6 @@ export default function ConsentPage() {
           onClose={() => setShowReconfirm(false)}
         />
       )}
-    </div>
+    </main>
   );
 }

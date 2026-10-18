@@ -9,7 +9,6 @@ export interface CardProps<T> {
 export function SimBadge({ children = "SIMULATED" }: { children?: string }) {
   return (
     <span className="sim-badge" aria-label="Simulated: no real money moves">
-      <span aria-hidden="true">🧪 </span>
       {children}
     </span>
   );

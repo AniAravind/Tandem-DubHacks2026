@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
-import { api, ApiError, setDemoMember } from "../api/client";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { api, ApiError, setDemoMember, getDemoMember } from "../api/client";
 import { SimBadge } from "../components/cards/common";
 import { Composer } from "./Composer";
 import { DEMO_GROUP, resolveGroupId } from "./demo";
@@ -9,6 +9,7 @@ import { MessageList } from "./MessageList";
 import { QuickReplies } from "./QuickReplies";
 import { TypingIndicator } from "./TypingIndicator";
 import type { ChatMessage, Group, GroupMember } from "./types";
+import AppShell, { Icon } from "../components/layout/AppShell";
 import "./chat.css";
 
 const POLL_MS = 2000;
@@ -26,6 +27,7 @@ export default function ChatPage() {
 
   const me: GroupMember | undefined = useMemo(() => {
     const members = group?.members ?? [];
+    if (group?.can_switch_member === false) return members.find(m => m.id === group.current_member_id);
     const as = (params.get("as") ?? "").toLowerCase();
     return members.find((m) => m.display_name.toLowerCase() === as) ?? members.find((m) => m.role === "organizer") ?? members[0];
   }, [group, params]);
@@ -35,7 +37,7 @@ export default function ChatPage() {
     let cancelled = false;
     const seed = groupId === DEMO_GROUP.id ? DEMO_GROUP : null;
     if (seed) setDemoMember(seed.members[0].id);
-    api.get<Group>(`/groups/${groupId}`)
+    api.get<Group>(`/groups/${groupId}?include=workspace`)
       .then((g) => !cancelled && setGroup({ ...g, members: g.members.filter((m) => m.status === "active") }))
       .catch(() => !cancelled && (seed ? setGroup(seed) : setError("This chat isn't available. Check the link.")));
     return () => { cancelled = true; };
@@ -46,7 +48,7 @@ export default function ChatPage() {
     setDemoMember(me.id);
     try {
       const r = await api.get<{ messages: ChatMessage[] }>(`/groups/${groupId}/messages?after_seq=${lastSeq.current}`);
-      if (!r.messages.length) return;
+      if (getDemoMember() !== me.id || !r.messages.length) return;
       lastSeq.current = r.messages[r.messages.length - 1].seq;
       setMessages((prev) => [...prev, ...r.messages.filter((m) => !prev.some((p) => p.id === m.id))]);
       if (r.messages.some((m) => m.direction === "out")) setTypingSince(null);
@@ -103,31 +105,31 @@ export default function ChatPage() {
   const lastQuick = messages.length ? messages[messages.length - 1].quick_replies : [];
 
   if (!group || !me) {
-    return <main className="chat-page"><p className="muted">{error ?? "Loading chat…"}</p></main>;
+    return <AppShell groupId={groupId}><main className="chat-page" aria-busy={!error}><p className="muted">{error ?? "Loading chat…"}</p></main></AppShell>;
   }
   return (
-    <main className="chat-page">
+    <AppShell groupId={groupId}><div className="page-topbar"><div className="breadcrumb">Your space<span>/</span>Group chat</div><Link className="text-link" to={`/g/${groupId}`}>View overview<Icon name="arrow"/></Link></div><main className="chat-page">
       <header className="chat-header">
         <div>
-          <h1>{group.name}</h1>
+          <p className="eyebrow">THE GROUP CONVERSATION</p><h1>{group.name}</h1>
           <p className="muted">{group.members.length} people · <SimBadge>SIMULATED PAYMENTS</SimBadge></p>
         </div>
-        <MemberSwitcher members={group.members} meId={me.id} onChange={(m) => {
+        {group.can_switch_member === false ? <span className="signed-in">Signed in as <strong>{me.display_name}</strong></span> : <MemberSwitcher members={group.members} meId={me.id} onChange={(m) => {
           // Each member sees different private messages, so reload the history as them.
           lastSeq.current = 0;
           setMessages([]);
           setParams({ as: m.display_name });
-        }} />
+        }} />}
       </header>
       {error ? <p className="banner" role="status">{error}</p> : null}
       {messages.length === 0 ? (
-        <p className="empty">No messages yet. Try: “@tandem can you find us a cabin? like 150-200 each”</p>
+        <section className="chat-welcome"><span className="welcome-symbol">↗</span><p className="eyebrow">FROM “WE SHOULD” TO “WE’RE GOING”</p><h2>Make a plan.<br/>Bring everyone along.</h2><p>Tandem finds the options, keeps the group in sync, and makes sure no one has to pay for everyone.</p><button className="btn primary" onClick={() => reply("@tandem can you find us a cabin? like 150-200 each")}>Find a place for the group <Icon name="arrow"/></button><span className="fine">Or mention @tandem in a message below.</span></section>
       ) : null}
       <MessageList messages={messages} meId={me.id} onReply={reply} consentUrl={consentUrl} onDemoShare={demoShare} />
       <TypingIndicator key={typingSince ?? 0} since={typingSince} />
       <div ref={bottom} />
       <QuickReplies replies={lastQuick} onReply={reply} />
       <Composer onSend={send} />
-    </main>
+    </main></AppShell>
   );
 }

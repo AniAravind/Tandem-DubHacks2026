@@ -12,7 +12,7 @@ export default function SecureCardField({
     <section className="consent-card">
       <label htmlFor={id}>Card</label>
       <div className="secure-field">
-        <div className="secure-label">secure field (tokenized) 🔒</div>
+        <div className="secure-label">Simulated secure field · tokenized</div>
         <input
           id={id}
           className="field"
@@ -29,9 +29,4 @@ export default function SecureCardField({
       </p>
     </section>
   );
-}
-
-export function last4FromPan(pan: string): string {
-  const digits = pan.replace(/\D/g, "");
-  return digits.slice(-4).padStart(4, "0");
 }

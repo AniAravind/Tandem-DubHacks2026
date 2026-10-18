@@ -47,6 +47,27 @@ def keys(d):
 
 
 class ShapeTests(ApiTestBase):
+    def test_event_payload_removes_nested_private_limits(self):
+        from purchases.serializers import _clean_payload
+        payload = {"scope": {"max_amount_cents": 21000, "merchant_ids": ["pinestay"]},
+                   "nested": [{"cap_cents": 25000, "amount_cents": 17500}]}
+        self.assertEqual(_clean_payload(payload), {
+            "scope": {"merchant_ids": ["pinestay"]}, "nested": [{"amount_cents": 17500}]})
+
+
+    def test_workspace_identity_matches_signed_session(self):
+        from core.session import COOKIE_NAME, make_session_value
+        self.client.cookies[COOKIE_NAME] = make_session_value(self.priya.id)
+        data = self.get(f"{BASE}/groups/{self.group.id}?include=workspace", self.maya).json()
+        self.assertEqual(data["current_member_id"], str(self.priya.id))
+        self.assertFalse(data["can_switch_member"])
+
+    def test_opt_in_current_purchase(self):
+        data = self.get(f"{BASE}/groups/{self.group.id}?include=current_purchase", self.maya).json()
+        self.assertEqual(data["current_purchase_id"], str(self.purchase.id))
+        self.assertNotIn("current_purchase_id", self.get(f"{BASE}/groups/{self.group.id}", self.maya).json())
+
+
     def test_group_shape(self):
         data = self.get(f"{BASE}/groups/{self.group.id}", self.maya).json()
         self.assertEqual(keys(data), keys(FIXTURES["group_detail"]))
