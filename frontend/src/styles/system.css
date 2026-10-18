@@ -1,0 +1,88 @@
+/* Tandem design system: flat, high-contrast, type-led (in the spirit of uber.com / atlassian.com).
+   Loaded after every page stylesheet so these rules win. Black is the action color; color is reserved for status. */
+
+body{background:#fff;color:#000;font-size:16px;line-height:1.5}
+h1,h2,h3{color:#000;letter-spacing:-.02em}
+h1{font-weight:700}h2,h3{font-weight:600}
+a{color:#000;text-underline-offset:3px}
+:focus-visible{outline:2px solid #000;outline-offset:3px}
+::selection{background:#e2e2e2}
+
+/* buttons: black primary, gray secondary, 8px corners */
+.btn{min-height:48px;padding:0 20px;border-radius:8px;border:0;background:#eeeeee;color:#000;font-size:16px;font-weight:500;letter-spacing:0;transition:background .12s}
+.btn:hover{background:#e2e2e2;border:0}
+.btn.primary,.btn-primary{background:#000;color:#fff}
+.btn.primary:hover,.btn-primary:hover{background:#333}
+.text-link,.text-button{color:#000;font-weight:500;font-size:14px}
+
+/* labels: quiet, readable, no tracking-heavy caps */
+.eyebrow,.kicker{font-size:13px;font-weight:500;letter-spacing:0;color:#5e5e5e;text-transform:none}
+.sim-badge{background:#f3f3f3;border:0;border-radius:4px;color:#545454;font-size:12px;font-weight:500;letter-spacing:0;padding:3px 8px}
+.sim-badge:before{display:none}
+.status-pill{background:#f3f3f3;color:#000;border-radius:4px;font-size:13px;font-weight:500;padding:5px 10px}
+.muted,.subtle-label,.fine{color:#5e5e5e}
+.fine{font-size:13px}
+.banner{border-radius:8px;font-size:14px}
+
+/* app shell */
+.sidebar{background:#fff}
+.brand{letter-spacing:-.04em}
+.sidebar nav a{font-size:15px;font-weight:500;color:#5e5e5e;border-radius:8px}
+.sidebar nav a.active{color:#000;background:#f3f3f3}
+.sidebar nav a:hover{background:#f6f6f6}
+
+/* overview: flat sections divided by rules, not floating boxes */
+.dashboard-heading h1{font-size:40px;font-weight:700;letter-spacing:-.03em}
+.dashboard-subtitle{font-size:15px}
+.dashboard-grid{gap:0 48px}
+.dash-panel{background:transparent;border:0;border-top:1px solid #e8e8e8;border-radius:0;padding:28px 0}
+.deadline-panel{background:transparent;border-color:#e8e8e8}
+.deadline-panel>svg{right:0;color:#000}
+.deadline-panel h2{font-size:32px;font-weight:700;letter-spacing:-.03em}
+.deadline-panel p{font-size:15px;color:#5e5e5e}
+.section-heading h2{font-size:20px;font-weight:600}
+.funding-ring strong{font-weight:700}.funding-ring span{font-size:13px}
+.ring-track{stroke:#eeeeee}.ring-fill{stroke:#000}
+.funding-amount{font-size:32px;font-weight:700}
+.funding-detail>p:not(.eyebrow){font-size:15px}
+.member-initial,.member-color-1,.member-color-2{background:#eeeeee;color:#000;font-weight:600}
+.member-row strong{font-size:15px;font-weight:500}
+.member-row>div>span,.member-state{font-size:13px}
+.activity-list p,.expense-list li{font-size:15px}
+.activity-list time,.expense-list span{font-size:13px}
+.event-point{background:#000}
+.integrity{font-size:13px}
+.net-total,.balance-list{font-size:15px}
+.quiet-start{border:0;background:#f6f6f6;border-radius:12px;padding:24px}
+.quiet-start p{color:#000;font-size:16px}
+p.quiet-empty{font-size:15px}
+
+/* chat */
+.chat-header h1{font-size:28px;font-weight:700}
+.chat-welcome h2{font-size:28px;font-weight:700}
+.chat-welcome p{font-size:16px}
+.bubble{border-radius:18px;border:0;background:#f3f3f3;font-size:15px}
+.msg.agent .bubble{background:#f3f3f3}
+.msg.mine .bubble{background:#000;color:#fff}
+.msg.private .bubble{border:1px solid #000;background:#fff}
+.bubble a{color:inherit;text-decoration:underline}
+.card{border:1px solid #e2e2e2;border-radius:12px;box-shadow:none}
+.switcher select,.composer input,.composer textarea{border-radius:8px;border:1px solid #e2e2e2;font-size:16px}
+
+/* payment page */
+.consent-intro h1{font-weight:700;letter-spacing:-.03em}
+.share-amount{font-weight:700;letter-spacing:-.03em}
+.hold-note{background:#f3f3f3;color:#000;border-radius:8px}
+.seat-bar span{background:#e2e2e2}.seat-bar span.mine{background:#000}
+
+@media(max-width:700px){
+  .sidebar nav a{font-size:13px;white-space:nowrap;padding:8px 10px;gap:6px}
+  .sidebar nav svg{width:15px}
+  .dashboard-heading h1,.chat-header h1{font-size:28px;line-height:1.1}
+  .chat-welcome h2{font-size:24px}
+  .deadline-panel h2{font-size:26px}
+  .btn{font-size:15px}
+}
+.workspace-label,.sidebar-bottom,.sidebar-trip small{display:none}
+.consent-choice.primary,.consent-choice.primary:hover:not(:disabled){background:#000;color:#fff;border-color:#000}
+.consent-choice.primary:hover:not(:disabled){background:#333}

@@ -11,11 +11,6 @@ export default function LandingPage() {
     </header>
     <main id="main">
       <PhoneStory />
-      <section className="landing-steps" aria-label="How Tandem works">
-        <article><span>1</span><h2>Text it</h2><p>Say what you’re buying and who’s in.</p></article>
-        <article><span>2</span><h2>Pick together</h2><p>Compare options and vote in one link.</p></article>
-        <article><span>3</span><h2>Pay your share</h2><p>Nobody’s charged until everyone’s in.</p></article>
-      </section>
     </main>
     <footer className="landing-footer">Demo build · payments are simulated</footer>
   </div>;
