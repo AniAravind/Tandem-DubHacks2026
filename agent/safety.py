@@ -65,6 +65,14 @@ def amounts_in(text: str) -> set[int]:
     return out
 
 
+def planning_amounts_in(text: str) -> set[int]:
+    """Explicit user budget phrases, including '300 per person' without a dollar sign."""
+    values = amounts_in(text)
+    for amount in re.findall(r'(?<![\d/])\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?\b|USD\b|(?:per\s+(?:person|buyer)|each)\b)', text, re.I):
+        values.add(round(float(amount) * 100))
+    return values
+
+
 def cents_in(value) -> set[int]:
     """Every integer under a *_cents key, anywhere in a tool result."""
     found = set()

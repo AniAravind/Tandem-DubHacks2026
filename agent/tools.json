@@ -14,14 +14,9 @@
         "properties": {
           "category": {
             "type": "string",
-            "enum": [
-              "rental",
-              "passes",
-              "flights",
-              "furniture",
-              "electronics",
-              "gift_bundle"
-            ]
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "Catalog category: rental, passes, furniture, electronics, gift_bundle, flights, or any other buying category. Empty results mean no catalog offer; do not invent one."
           },
           "budget_per_person_max": {
             "type": "number",
@@ -45,7 +40,7 @@
           },
           "group_size": {
             "type": "integer",
-            "minimum": 2,
+            "minimum": 1,
             "maximum": 20
           },
           "location": {
@@ -115,7 +110,7 @@
             "items": {
               "type": "string"
             },
-            "minItems": 2
+            "minItems": 1
           },
           "deadline_hours": {
             "type": "integer",
@@ -235,7 +230,7 @@
     "type": "function",
     "function": {
       "name": "publish_plan",
-      "description": "Publish a separate shared website trip plan using a searched option. Use the organizer’s chosen option, or the top-ranked match when they request a proposed rough-plan link. No payments or fabricated members are created. The server attaches a private organizer link.",
+      "description": "Publish a separate shared website trip plan using a searched option. Use the organizer\u2019s chosen option, or the top-ranked match when they request a proposed rough-plan link. No payments or fabricated members are created. The server attaches a private organizer link.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -259,6 +254,78 @@
             "maxLength": 2000
           }
         }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "save_buying_brief",
+      "description": "Record the CURRENT solo or group buying goal before searching. Replace old trip/gift requirements when the topic changes. Supports any category; one buyer is valid. Me and 4 friends means 5 total.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "goal",
+          "category",
+          "group_size"
+        ],
+        "properties": {
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "group_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "budget_per_person": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "User-confirmed USD dollars, not cents. Omit if unknown. A budget is not an offer or permission to charge."
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "maxItems": 12
+          },
+          "recommendations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 400
+            },
+            "maxItems": 5,
+            "description": "Qualitative options/tradeoffs only, no prices, URLs, availability, or claims of verified products."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "publish_buying_plan",
+      "description": "Create a shared or solo planning-only frontend page from the current buying brief when no priced catalog option exists. No offer, payment, hold, or booking is fabricated.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
       }
     }
   }

@@ -21,6 +21,7 @@ class PhotonSession(models.Model):
     key = models.CharField(max_length=64, primary_key=True)
     member = models.OneToOneField(Member, on_delete=models.CASCADE)
     delivered_seq = models.BigIntegerField(default=0)
+    planning_state = models.JSONField(default=dict, blank=True)
 
 
 class PhotonReceipt(models.Model):

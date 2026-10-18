@@ -156,7 +156,7 @@ class ValidateTest(TestCase):
     def test_schema_keywords(self):
         from agent.orchestrator import SCHEMAS
         self.assertEqual(validate(SEARCH, SCHEMAS["search_options"]), [])
-        self.assertTrue(validate({"category": "rental", "group_size": 1}, SCHEMAS["search_options"]))
+        self.assertTrue(validate({"category": "rental", "group_size": 0}, SCHEMAS["search_options"]))
         self.assertTrue(validate({"category": "rental", "group_size": True}, SCHEMAS["search_options"]))
         self.assertTrue(validate({**SEARCH, "dates": {"start": "nov 14"}}, SCHEMAS["search_options"]))
         self.assertTrue(validate({"amount": 0, "payer_id": "x", "split": {"mode": "equal"}}, SCHEMAS["add_expense"]))

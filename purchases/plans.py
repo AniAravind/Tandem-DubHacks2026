@@ -37,6 +37,10 @@ def owner_url(plan):
     return plan_url(plan) + '?owner=' + token
 
 
+def expires_at(plan):
+    return plan.vote.closes_at if plan.vote_id else plan.created_at + timedelta(days=7)
+
+
 @transaction.atomic
 def publish(member, args):
     from chat.services import redact
@@ -52,8 +56,12 @@ def publish(member, args):
     if source is None:
         raise RuleError('not_found', 'Search for options first, then choose one of those option IDs.')
     size = source.meta.get('group_size')
-    if not isinstance(size, int) or not 2 <= size <= 20:
-        raise RuleError('invalid_group_size', 'Search using the intended trip size before publishing.')
+    if not isinstance(size, int) or not 1 <= size <= 20:
+        raise RuleError('invalid_group_size', 'Search using the intended buyer count before publishing.')
+    from chat.models import PhotonSession
+    brief = PhotonSession.objects.get(member=member).planning_state
+    if brief and source.meta.get('brief_revision') != brief.get('revision'):
+        raise RuleError('stale_option', 'Those options belong to an older buying goal. Search for the current goal first.')
     plan = TripPlan.objects.filter(source_group=member.group, selected_option__meta__source_option_id=str(source.id)).first()
     if plan is None:
         group = Group.objects.create(name=redact(args['title']), channel='web', timezone=member.group.timezone)
@@ -72,7 +80,7 @@ def publish(member, args):
         vote = Vote.objects.create(group=group, purpose='pick_option', choices=[{'key': '1', 'option_id': str(copied.id), 'label': copied.title}],
                                    quorum=size, closes_at=timezone.now() + timedelta(days=7))
         plan = TripPlan.objects.create(source_group=member.group, group=group, selected_option=copied, vote=vote,
-                                      title=redact(args['title']), summary=redact(args['summary']), expected_members=size)
+                                      title=redact(args['title']), summary=redact(args['summary']), expected_members=size, details=brief)
         log_event('plan.published', actor=f'member:{member.id}', group_id=group.id,
                   payload={'plan_id': str(plan.id), 'expected_members': size, 'title': plan.title})
     return {'plan_id': str(plan.id), 'title': plan.title, 'summary': plan.summary,
@@ -81,16 +89,20 @@ def publish(member, args):
 
 def payload(plan, request):
     member = Member.objects.filter(pk=member_id_from_request(request), group=plan.group, status='active').first()
-    option = plan.selected_option
     purchase = Purchase.objects.filter(group=plan.group).order_by('-created_at').first()
+    option = purchase.option if purchase else plan.selected_option
     people = plan.group.members.filter(status='active')
     data = {'id': str(plan.id), 'title': plan.title, 'summary': plan.summary, 'share_url': plan_url(plan),
             'group_id': str(plan.group_id), 'expected_members': plan.expected_members, 'joined_count': people.count(),
-            'expires_at': iso(plan.vote.closes_at), 'expired': not purchase and timezone.now() >= plan.vote.closes_at,
+            'expires_at': iso(expires_at(plan)), 'expired': not purchase and timezone.now() >= expires_at(plan),
+            'checkout_ready': bool(option and plan.vote_id), 'category': option.category if option else plan.details.get('category', 'purchase'),
+            'details': plan.details,
             'option': {'title': option.title, 'total_cents': option.total_cents, 'currency': option.currency,
                        'per_person_cents': -(-option.total_cents // plan.expected_members), 'features': option.features,
                        'photo_url': option.meta.get('photo_url'), 'check_in': option.meta.get('check_in'),
-                       'check_out': option.meta.get('check_out'), 'cancellation': option.meta.get('cancellation', '')},
+                       'check_out': option.meta.get('check_out'), 'cancellation': option.meta.get('cancellation', '')} if option else {
+                        'title':plan.title,'total_cents':None,'per_person_cents':None,'currency':'USD','features':plan.details.get('requirements',[]),
+                        'photo_url':None,'check_in':None,'check_out':None,'cancellation':''},
             'me': {'id': str(member.id), 'display_name': member.display_name, 'organizer': plan.group.organizer_id == member.id} if member else None,
             'members': [{'id': str(m.id), 'display_name': m.display_name} for m in people] if member else [],
             'purchase': {'id': str(purchase.id), 'state': purchase.state, 'deadline_at': iso(purchase.deadline_at)} if purchase else None,
@@ -142,7 +154,7 @@ def join(request, plan_id):
         return response
     if Purchase.objects.filter(group=plan.group).exists():
         raise ApiError('roster_locked', 'Payment collection has started; this trip’s participants are fixed.', 409)
-    if timezone.now() >= plan.vote.closes_at:
+    if timezone.now() >= expires_at(plan):
         raise ApiError('plan_expired', 'This plan’s join link expired. Ask the organizer for a new plan.', 410)
     is_owner = False
     if data.get('owner_token'):
@@ -164,7 +176,8 @@ def join(request, plan_id):
     if is_owner:
         plan.group.organizer = member
         plan.group.save(update_fields=['organizer'])
-    Ballot.objects.create(vote=plan.vote, member=member, choice_key='1')
+    if plan.vote_id:
+        Ballot.objects.create(vote=plan.vote, member=member, choice_key='1')
     log_event('plan.joined', actor=f'member:{member.id}', group_id=plan.group_id, payload={'plan_id': str(plan.id)})
     # Render this member's view without accepting a client-supplied identity.
     from core.session import COOKIE_NAME, make_session_value
@@ -183,8 +196,10 @@ def fund(request, plan_id):
     member = current_member(request, plan.group_id)
     if plan.group.organizer_id != member.id:
         raise ApiError('organizer_required', 'Only the organizer can open payment collection.', 403)
+    if not plan.selected_option_id or not plan.vote_id:
+        raise ApiError('quote_required', 'This is a planning-only decision. A supported merchant offer is required before collecting payments.', 409)
     if not Purchase.objects.filter(group=plan.group).exists():
-        if timezone.now() >= plan.vote.closes_at:
+        if timezone.now() >= expires_at(plan):
             raise ApiError('plan_expired', 'This plan has expired.', 410)
         members = plan.group.members.filter(status='active')
         if members.count() != plan.expected_members or plan.vote.ballots.count() != plan.expected_members:

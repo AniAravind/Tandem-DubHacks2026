@@ -782,6 +782,8 @@ class RulesEngine:
     def __init__(self):
         self.schemas = toolschema.load_tool_schemas()
         self.tools = {
+            "save_buying_brief": self._save_buying_brief,
+            "publish_buying_plan": self._publish_buying_plan,
             "publish_plan": self._publish_plan,
             "search_options": self._search_options, "start_vote": self._start_vote,
             "create_purchase": self._create_purchase, "check_status": self._check_status,
@@ -844,6 +846,9 @@ class RulesEngine:
         if args["group_size"] != len(members) and not private_planner(member):
             raise RuleError("group_size_mismatch", f"The group has {len(members)} active members, not {args['group_size']}.")
         budget_max = args.get("budget_per_person_max")
+        from chat.models import PhotonSession
+        session = PhotonSession.objects.filter(member=member).first()
+        brief = session.planning_state if session else {}
         ranked = consensus.rank_options(
             members, args["category"], args["group_size"], extra_must_haves=args.get("must_haves", []),
             budget_per_person_max_cents=round(budget_max * 100) if budget_max is not None else None)
@@ -856,7 +861,7 @@ class RulesEngine:
                 category=args["category"], title=listing.title, total_cents=c.total_cents, capacity=listing.capacity,
                 features=listing.features, score=c.score, explanation_facts=c.facts,
                 meta={**listing.meta, "search_id": search_id, "rank": rank, "per_person_cents": c.per_person_cents,
-                      "location": args.get("location", ""),
+                      "location": args.get("location", ""), "brief_revision": brief.get('revision'),
                       "group_size": args["group_size"], **self._trip_dates(args)}))
         log_event(EventType.OPTIONS_RANKED, actor="rules", group_id=member.group_id,
                   payload={"count": len(options), "top": options[0].title if options else None})
@@ -894,6 +899,8 @@ class RulesEngine:
             raise RuleError('publish_plan_required', 'Publish the shared plan first. Payments happen on the website after participants join.')
         plan = TripPlan.objects.filter(group_id=member.group_id).first()
         if plan:
+            if not plan.selected_option_id or not plan.vote_id:
+                raise RuleError('quote_required', 'This decision has no supported merchant offer yet. No payment can be collected.')
             participants = {str(i) for i in member.group.members.filter(status='active').values_list('id', flat=True)}
             if (member.group.organizer_id != member.id or len(participants) != plan.expected_members
                     or set(args['member_ids']) != participants or plan.vote.ballots.count() != plan.expected_members):
@@ -913,8 +920,9 @@ class RulesEngine:
 
         ids = list(dict.fromkeys(args["member_ids"]))
         buyers = [self._own(Member, i, member, "member") for i in ids]
-        if len(buyers) < 2 or any(b.status != Member.Status.ACTIVE for b in buyers):
-            raise RuleError("invalid_arguments", "Choose at least two active members.")
+        minimum = 1 if plan and plan.expected_members == 1 else 2
+        if len(buyers) < minimum or any(b.status != Member.Status.ACTIVE for b in buyers):
+            raise RuleError("invalid_arguments", f"Choose at least {minimum} active members.")
         if len(buyers) > option.capacity:
             raise RuleError("over_capacity", f"This option holds {option.capacity} people, not {len(buyers)}.")
         total = option.total_cents
@@ -947,6 +955,14 @@ class RulesEngine:
     def _publish_plan(self, member: Member, args: dict) -> dict:
         from purchases.plans import publish
         return publish(member, args)
+
+    def _save_buying_brief(self, member, args):
+        from purchases.briefs import save
+        return save(member, args)
+
+    def _publish_buying_plan(self, member, args):
+        from purchases.briefs import publish
+        return publish(member)
 
     def _check_status(self, member: Member, args: dict) -> dict:
         if "purchase_id" in args:

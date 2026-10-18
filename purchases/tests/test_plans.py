@@ -84,7 +84,7 @@ class SharedPlanTests(TestCase):
         count = 0
         def llm(messages,tools,**kwargs):
             nonlocal count
-            self.assertEqual({t['function']['name'] for t in tools},{'search_options','publish_plan'})
+            self.assertEqual({t['function']['name'] for t in tools},{'search_options','publish_plan','save_buying_brief','publish_buying_plan'})
             count += 1
             if count == 1:
                 return reply(calls=[tool_call('publish_plan',self.args)])
@@ -118,7 +118,7 @@ class SharedPlanTests(TestCase):
         model=ScriptedLLM(*[reply('Here is the private organizer link.') for _ in range(3)])
         out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor)
         self.assertEqual(len(out),1)
-        self.assertIn('haven’t created a link',out[0].text)
+        self.assertIn('haven’t created a buying plan',out[0].text)
         self.assertIsNone(out[0].link)
 
     def test_private_single_member_search_block_is_repaired(self):
