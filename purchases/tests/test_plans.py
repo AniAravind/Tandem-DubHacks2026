@@ -245,3 +245,68 @@ class SharedPlanTests(TestCase):
         self.assertEqual(purchase.shares.filter(status='captured').count(),4)
         for client in clients:
             self.assertEqual(client.get(self.path).json()['my_share']['status'],'captured')
+
+    @patch('purchases.tasks.schedule_purchase_jobs')
+    def test_final_join_automatically_prepares_private_payment_links(self, schedule):
+        clients = [APIClient() for _ in range(4)]
+        self.owner_join(clients[0])
+        for n, client in enumerate(clients[1:], 2):
+            response = self.join(client, n)
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()['my_share']['consent_url'])
+        self.assertEqual(Purchase.objects.filter(group=self.plan.group).count(), 1)
+        links = [client.get(self.path).json()['my_share']['consent_url'] for client in clients]
+        self.assertEqual(len(set(links)), 4)
+        self.assertIsNone(APIClient().get(self.path).json()['my_share'])
+        self.assertEqual(clients[0].post(self.path+'/fund', {}, format='json').status_code, 200)
+        self.assertEqual(Purchase.objects.filter(group=self.plan.group).count(), 1)
+
+    def test_us_phone_formats_use_same_canonical_identity(self):
+        client = APIClient()
+        response = self.join(client, 2, phone='(555) 555-0002')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.join(client, 2, phone='1 555 555 0002').status_code, 200)
+        self.assertEqual(self.join(APIClient(), 2, phone='+1 555 555 0002').status_code, 409)
+        self.assertEqual(self.join(APIClient(), 3, phone='5555550003').status_code, 201)
+        self.assertEqual(self.join(APIClient(), 4, phone='+44 7700 900123').status_code, 201)
+
+    @patch('purchases.tasks.schedule_purchase_jobs')
+    def test_planning_only_payment_simulation_requires_explicit_owner_total(self, schedule):
+        self.plan.selected_option = None
+        self.plan.vote = None
+        self.plan.save()
+        owner = APIClient()
+        self.owner_join(owner)
+        guests = [APIClient() for _ in range(3)]
+        for n, client in enumerate(guests, 2):
+            self.assertEqual(self.join(client, n).status_code, 201)
+        self.assertFalse(Purchase.objects.filter(group=self.plan.group).exists())
+        self.assertEqual(owner.post(self.path+'/fund', {}, format='json').status_code, 409)
+        data = {'confirm_simulation':True, 'demo_total_cents':12000}
+        self.assertEqual(guests[0].post(self.path+'/fund', data, format='json').status_code, 403)
+        for total in [True, 0, -100, 800001]:
+            self.assertEqual(owner.post(self.path+'/fund', {**data,'demo_total_cents':total}, format='json').status_code, 400)
+        with self.settings(DEMO_MODE=False):
+            self.assertEqual(owner.post(self.path+'/fund', data, format='json').status_code, 409)
+        response = owner.post(self.path+'/fund', data, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertTrue(response.json()['payment_simulation'])
+        self.assertEqual(response.json()['my_share']['amount_cents'], 3000)
+        self.assertTrue(response.json()['my_share']['consent_url'])
+        self.assertEqual(owner.post(self.path+'/fund', data, format='json').status_code, 200)
+        self.assertEqual(Purchase.objects.filter(group=self.plan.group).count(), 1)
+        from payments.simulated import SimulatedVisaAgentGateway
+        gateway = SimulatedVisaAgentGateway(on_event=lambda *args:None, latency_ms=0, force_decline_members=set())
+        with patch('payments.services.get_gateway',return_value=gateway), patch('purchases.rules.get_gateway',return_value=gateway):
+            for n, client in enumerate([owner, *guests]):
+                url = client.get(self.path).json()['my_share']['consent_url']
+                endpoint = '/api/v1/consent/' + url.split('/c/')[1]
+                consent = client.get(endpoint).json()
+                card = client.post(endpoint+'/tokenize', {'transient_card_token':f'tt_sim_1111_demo{n}'}, format='json').json()
+                with self.captureOnCommitCallbacks(execute=True):
+                    approved = client.post(endpoint+'/approve', {'agent_token_id':card['agent_token_id'],
+                        'cap_cents':consent['default_cap_cents'], 'consent_text_sha256':consent['consent_text_sha256'],
+                        'assertion':{'method':'otp','code':'000000'}}, format='json')
+                self.assertEqual(approved.status_code, 200, approved.json())
+        self.assertEqual(Purchase.objects.get(group=self.plan.group).state, 'booked')
+        self.assertEqual(owner.get(self.path).json()['my_share']['status'], 'captured')

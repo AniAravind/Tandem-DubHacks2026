@@ -18,3 +18,5 @@
 @media (max-width: 800px) { .plan-nav { padding: 0 20px; } .plan-heading h1 { font-size: 30px; } }
 
 .plan-recommendations{margin:24px 0;padding:20px;border:1px solid var(--border,#dedfd8);border-radius:14px}.plan-recommendations h3{margin:0 0 8px}.plan-recommendations ul{padding-left:20px;line-height:1.7}.plan-no-quote{padding:16px;border-radius:12px;background:#f3efdf;color:#51472b;line-height:1.6}
+
+.plan-demo-form{display:grid;gap:12px;margin:18px 0;padding-top:18px;border-top:1px solid var(--line)}.plan-demo-form h3{margin:0;font-size:17px}.plan-demo-form>label{font-size:13px;font-weight:600}.plan-demo-form>input{width:100%;padding:12px;border:1px solid var(--ink-300);border-radius:8px;background:var(--surface);color:var(--ink-900)}.plan-payment-help{padding:16px;background:var(--tandem-50);border-radius:10px;margin:18px 0;font-size:13px;line-height:1.7}.plan-payment-help ol{padding-left:20px;margin:9px 0}.plan-payment-help p{font-size:12px;margin-bottom:0}

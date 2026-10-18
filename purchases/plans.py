@@ -23,6 +23,60 @@ from purchases.serializers import iso
 OWNER_SALT = 'tandem.plan-owner'
 
 
+def normalize_phone(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[+\d\s().-]+', value.strip()):
+        return None
+    raw = value.strip()
+    digits = re.sub(r'\D', '', raw)
+    if raw.startswith('+'):
+        phone = '+' + digits
+    elif len(digits) == 10:
+        phone = '+1' + digits
+    elif len(digits) == 11 and digits.startswith('1'):
+        phone = '+' + digits
+    else:
+        return None
+    return phone if re.fullmatch(r'\+[1-9]\d{7,14}', phone) else None
+
+
+def open_payments(plan):
+    """Called under the plan lock, only after everyone accepted the selected plan."""
+    if Purchase.objects.filter(group=plan.group).exists():
+        return
+    members = plan.group.members.filter(status='active')
+    if not plan.selected_option_id or not plan.vote_id:
+        raise ApiError('quote_required', 'Choose a supported offer or set up the clearly labeled payment simulation.', 409)
+    if timezone.now() >= expires_at(plan):
+        raise ApiError('plan_expired', 'This plan has expired.', 410)
+    if not plan.group.organizer_id or members.count() != plan.expected_members or plan.vote.ballots.count() != plan.expected_members:
+        raise ApiError('waiting_for_members', 'Everyone must join and accept before payment instructions appear.', 409)
+    from purchases.rules import RulesEngine
+    result = RulesEngine().execute('create_purchase', {'option_id': str(plan.selected_option_id),
+        'member_ids': [str(m.id) for m in members], 'deadline_hours': 6}, f'member:{plan.group.organizer_id}')
+    if not result['ok']:
+        raise ApiError(result['error']['code'], result['error']['message'], 409)
+
+
+def prepare_simulation(plan, total):
+    if not settings.DEMO_MODE or settings.PAYMENTS_GATEWAY != 'simulated':
+        raise ApiError('simulation_unavailable', 'Payment simulation is not enabled.', 409)
+    if isinstance(total, bool) or not isinstance(total, int) or not plan.expected_members <= total <= min(1000000, plan.expected_members * 200000):
+        raise ApiError('invalid_demo_total', 'Enter a demo total of at least one cent per buyer, up to $2,000 per buyer and $10,000 total.')
+    from merchant.models import Merchant, Listing
+    merchant, _ = Merchant.objects.get_or_create(slug='tandem-payment-demo', defaults={'name':'Tandem payment simulation', 'category':'demo'})
+    ref = str(plan.id)
+    Listing.objects.create(merchant=merchant, ref=ref, title=plan.title[:120], total_cents=total,
+        capacity=plan.expected_members, meta={'demo_data':True, 'payment_simulation':True})
+    plan.selected_option = Option.objects.create(group=plan.group, merchant_slug=merchant.slug, listing_ref=ref,
+        category=plan.details.get('category', 'gift_bundle'), title=plan.title[:120], total_cents=total,
+        capacity=plan.expected_members, meta={'group_size':plan.expected_members, 'payment_simulation':True})
+    plan.vote = Vote.objects.create(group=plan.group, purpose='pick_option', quorum=plan.expected_members,
+        closes_at=expires_at(plan), choices=[{'key':'1', 'option_id':str(plan.selected_option_id), 'label':plan.title}])
+    Ballot.objects.bulk_create([Ballot(vote=plan.vote, member=m, choice_key='1') for m in plan.group.members.filter(status='active')])
+    plan.details = {**plan.details, 'payment_simulation':True}
+    plan.save(update_fields=['selected_option','vote','details','updated_at'])
+
+
 def private_planner(member):
     from chat.models import PhotonSession
     return PhotonSession.objects.filter(member=member).exists()
@@ -96,7 +150,8 @@ def payload(plan, request):
             'group_id': str(plan.group_id), 'expected_members': plan.expected_members, 'joined_count': people.count(),
             'expires_at': iso(expires_at(plan)), 'expired': not purchase and timezone.now() >= expires_at(plan),
             'checkout_ready': bool(option and plan.vote_id), 'category': option.category if option else plan.details.get('category', 'purchase'),
-            'details': plan.details,
+            'details': plan.details, 'payment_simulation': bool(plan.details.get('payment_simulation')),
+            'simulation_available': settings.DEMO_MODE and settings.PAYMENTS_GATEWAY == 'simulated',
             'option': {'title': option.title, 'total_cents': option.total_cents, 'currency': option.currency,
                        'per_person_cents': -(-option.total_cents // plan.expected_members), 'features': option.features,
                        'photo_url': option.meta.get('photo_url'), 'check_in': option.meta.get('check_in'),
@@ -139,9 +194,9 @@ def join(request, plan_id):
     mutation_origin(request)
     plan = get_object_or_404(TripPlan.objects.select_for_update(), pk=plan_id)
     data = request.data if isinstance(request.data, dict) else {}
-    name, phone = data.get('name'), data.get('phone')
-    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60 or not isinstance(phone, str) or not re.fullmatch(r'\+[1-9]\d{7,14}', phone):
-        raise ApiError('invalid_request', 'Enter your name and phone number with country code, such as +14155551234.')
+    name, phone = data.get('name'), normalize_phone(data.get('phone'))
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60 or not phone:
+        raise ApiError('invalid_request', 'Enter your name and a 10-digit US number, or include an international country code.')
     if data.get('accept_plan') is not True:
         raise ApiError('acceptance_required', 'Confirm that you want to join this trip plan. Payment approval happens separately.')
     phone_hash = hashlib.sha256(phone.encode()).hexdigest()
@@ -179,6 +234,14 @@ def join(request, plan_id):
     if plan.vote_id:
         Ballot.objects.create(vote=plan.vote, member=member, choice_key='1')
     log_event('plan.joined', actor=f'member:{member.id}', group_id=plan.group_id, payload={'plan_id': str(plan.id)})
+    if plan.selected_option_id and plan.vote_id and plan.group.members.filter(status='active').count() == plan.expected_members:
+        # A recoverable setup failure must not undo the final person's successful join.
+        try:
+            with transaction.atomic():
+                open_payments(plan)
+        except ApiError as exc:
+            plan.details = {**plan.details, 'payment_setup_error':exc.message}
+            plan.save(update_fields=['details','updated_at'])
     # Render this member's view without accepting a client-supplied identity.
     from core.session import COOKIE_NAME, make_session_value
     request.COOKIES[COOKIE_NAME] = make_session_value(member.id)
@@ -196,17 +259,10 @@ def fund(request, plan_id):
     member = current_member(request, plan.group_id)
     if plan.group.organizer_id != member.id:
         raise ApiError('organizer_required', 'Only the organizer can open payment collection.', 403)
-    if not plan.selected_option_id or not plan.vote_id:
-        raise ApiError('quote_required', 'This is a planning-only decision. A supported merchant offer is required before collecting payments.', 409)
-    if not Purchase.objects.filter(group=plan.group).exists():
-        if timezone.now() >= expires_at(plan):
-            raise ApiError('plan_expired', 'This plan has expired.', 410)
-        members = plan.group.members.filter(status='active')
-        if members.count() != plan.expected_members or plan.vote.ballots.count() != plan.expected_members:
-            raise ApiError('waiting_for_members', 'Everyone must join and accept the plan before payment collection opens.', 409)
-        from purchases.rules import RulesEngine
-        result = RulesEngine().execute('create_purchase', {'option_id': str(plan.selected_option_id),
-            'member_ids': [str(m.id) for m in members], 'deadline_hours': 6}, f'member:{member.id}')
-        if not result['ok']:
-            raise ApiError(result['error']['code'], result['error']['message'], 409)
+    if not plan.selected_option_id:
+        data = request.data if isinstance(request.data, dict) else {}
+        if data.get('confirm_simulation') is not True:
+            raise ApiError('quote_required', 'No merchant offer is attached. Confirm a demo total to simulate payments without charging anyone.', 409)
+        prepare_simulation(plan, data.get('demo_total_cents'))
+    open_payments(plan)
     return Response(payload(plan, request))
