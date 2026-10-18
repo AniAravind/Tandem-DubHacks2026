@@ -112,6 +112,16 @@ def run_agent(group_id, member_id=None, event: dict | None = None, message_id=No
     if tool_calls_last_minute(group_id) >= MAX_TOOL_CALLS_PER_MIN:
         post_card(group_id, AgentMessage(text=SLOW_DOWN_TEXT))
         return
+    if event and member_id is None and event.get("type") in {"vote_closed", "share_declined"}:
+        # Trusted scheduler events still act through a real active group member.
+        group = Group.objects.select_related("organizer").get(pk=group_id)
+        if group.organizer_id and group.organizer.status == "active":
+            if event["type"] == "vote_closed":
+                from purchases.models import Purchase
+                if Purchase.objects.filter(group=group, option_id=event.get("winner_option_id")).exists():
+                    return
+            post_all(group_id, orchestrator.Orchestrator(group_id).run(f"member:{group.organizer_id}", event=event))
+        return
     inbound = InboundMessage(group_id=str(group_id), member_id=member_id, text="") if member_id else None
     if message_id and inbound:
         stored = ChatMessage.objects.get(pk=message_id, group_id=group_id, member_id=member_id, direction="in")

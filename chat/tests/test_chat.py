@@ -22,6 +22,7 @@ class RedactionTest(TestCase):
         self.assertEqual(services.redact("like 150-200 each, nov 14-16"), "like 150-200 each, nov 14-16")
 
 
+@mock.patch("agent.orchestrator.get_engine", new=lambda group_id=None: FakeRulesEngine(group_id))   # real engine exists now
 class ChatApiTest(TestCase):
     def setUp(self):
         self.group = seed()

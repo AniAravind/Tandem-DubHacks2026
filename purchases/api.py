@@ -131,11 +131,15 @@ def cast_ballot(request, vid):
         raise ApiError("vote_closed", "This vote is closed.", 409)
     if not isinstance(choice, str) or choice not in {c["key"] for c in vote.choices}:
         raise ApiError("invalid_choice", "That is not one of the choices.")
+    if member.id not in {m.id for m in consensus.eligible_voters(vote)}:
+        raise ApiError("not_a_voter", "Only people still in this purchase can vote on this.", 403)
     with transaction.atomic():
         Ballot.objects.update_or_create(vote=vote, member=member, defaults={"choice_key": choice})   # change allowed
         log_event(EventType.BALLOT_CAST, actor=f"member:{member.id}", group_id=vote.group_id,
                   payload={"vote_id": str(vote.id), "member_id": str(member.id)})
         vote = consensus.close_if_decided(vote)               # closes right away once everybody has voted
+    if vote.purpose == Vote.Purpose.FALLBACK and vote.status == Vote.Status.CLOSED:
+        rules.apply_fallback(vote.id)                          # does nothing unless there is a winner; safe to repeat
     return Response(ser.vote_json(vote, member))
 
 

@@ -164,13 +164,14 @@ class ConsentApiTests(TestCase):
         self.assertEqual(resp.json()["error"]["code"], "link_expired")
 
     @override_settings(DEMO_MODE=True)
-    def test_reconfirm_fixture_when_rules_missing(self):
+    def test_reconfirm_without_an_earlier_hold_needs_the_consent_page(self):
+        """The rules exist now (M6). A share that replaced nothing has no limit to re-approve, so use the link."""
         share, _, member = build_purchase("Alex")
         resp = self.client.post(
             f"/api/v1/shares/{share.id}/reconfirm",
             {"assertion": OTP}, format="json", HTTP_X_TANDEM_MEMBER=str(member.id))
-        self.assertEqual(resp.status_code, 501)
-        self.assertEqual(resp.json()["error"]["code"], "not_ready")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "consent_required")
 
     def test_tokenize_persists_last4_only(self):
         _, token, member = build_purchase("Alex")

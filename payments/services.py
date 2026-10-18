@@ -204,6 +204,7 @@ class ConsentService:
         return {"share_status": result.get("share_status", "declined")}
 
     def reconfirm(self, share_id, assertion: dict) -> dict:
+        """A passkey (or demo OTP) tap on a changed share: record exactly what was approved, then let the rules apply it."""
         share = Share.objects.select_related("member", "purchase").get(pk=share_id)
         from purchases import rules
         if not hasattr(rules, "apply_share_change"):
@@ -213,7 +214,7 @@ class ConsentService:
         previous = Share.objects.filter(superseded_by=share, member=share.member).first()
         latest = (previous or share).consents.order_by("-accepted_at").first()
         if latest is None or share.amount_cents > latest.cap_cents:
-            raise ConsentError("consent_required", "Approve a new limit through fresh consent first.", 409)
+            raise ConsentError("consent_required", "Approve a new limit through fresh consent first.", 400)
         method = self._verify_assertion(share, assertion)
         payload = self._payload(share, latest.cap_cents)
         consent = Consent.objects.create(member=share.member, share=share, consent_text_version=VERSION,
@@ -222,7 +223,10 @@ class ConsentService:
         log_event(EventType.CONSENT_ACCEPTED, actor=f"member:{share.member_id}",
             group_id=share.purchase.group_id, purchase_id=share.purchase_id,
             payload={"share_id": str(share.id), "method": method, "amount_cents": share.amount_cents})
-        return rules.apply_share_change(share.id, consent.id)
+        result = rules.apply_share_change(share.id, consent.id)
+        if "error" in result:
+            raise ConsentError(result["error"]["code"], result["error"]["message"], 409)
+        return result
 
     def _verify_assertion(self, share, assertion: dict) -> str:
         assertion = assertion or {}

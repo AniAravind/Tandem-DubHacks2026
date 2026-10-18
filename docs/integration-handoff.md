@@ -1,6 +1,6 @@
 # Integration handoff
 
-Implemented in this checkout; not deployed yet. No model migrations or tool/card schema changes.
+Integration branch includes Eshaan’s merged M6 fallbacks and M7 Celery tasks. Deployment validation follows. No model migrations or tool/card schema changes.
 
 ## Aryan
 
@@ -42,3 +42,7 @@ Heroku has Postgres and Redis attachments, web.1 and worker.1 up, WEB_CONCURRENC
 ## Remaining rollout checks
 
 Do not switch MERCHANT_MODE to http until a PostgreSQL self-HTTP test with real concurrent workers passes. SQLite endpoint tests cannot prove absence of cross-process lock contention. Test two final approvals concurrently, rejection before capture, signed merchant retry, worker restart, and fresh-consent fallback. Then deploy and run happy path and dropout twice after reset. These tests cannot establish fallback completion until Eshaan's implementation lands.
+
+## Backend merge update
+
+Merged origin/main through 643a08e before deployment. M6 and M7 are present; removed the reconfirm fixture and retained fresh consent creation plus backend error handling. Trusted scheduled vote/dropout events use the active organizer identity. Demo/reset tooling and above-cap re-consent remain follow-up work. Merchant mode stays direct until the PostgreSQL self-HTTP test passes.

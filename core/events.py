@@ -22,6 +22,7 @@ class EventType:
     EXPENSE_ADDED = "expense.added"
     AGENT_TOOL_CALLED = "agent.tool_called";      AGENT_TOOL_REJECTED = "agent.tool_rejected"; AGENT_MESSAGE_SENT = "agent.message_sent"
     REMINDER_SENT = "reminder.sent"
+    HOLD_REFRESHED = "hold.refreshed";            HOLD_REFRESH_FAILED = "hold.refresh_failed"
     AUTH_OTP_VERIFIED = "auth.otp_verified";      AUTH_DENIED = "auth.denied"
     DEMO_ACTION = "demo.action"
 

@@ -67,6 +67,8 @@ if REDIS_URL.startswith("rediss://"):
     CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
     CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_EAGER", "0") == "1"   # local dev without Redis
+# Once a minute, catch anything that is due (votes to close, deadlines, reminders) even if a queued task was lost.
+CELERY_BEAT_SCHEDULE = {"tandem-sweep": {"task": "purchases.tasks.sweep", "schedule": 60.0}}
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
