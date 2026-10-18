@@ -25,7 +25,7 @@ export function OptionCard({ data, onReply }: CardProps<OptionCardData>) {
         <strong>{usd(data.per_person_cents)}</strong> /person <span className="muted">· {usd(data.total_cents)} total</span>
       </p>
       <p className="muted">
-        Sleeps {data.capacity}
+        For up to {data.capacity} buyers
         {data.features.map((f) => ` · ${FEATURES[f] ?? f.replace(/_/g, " ")}`).join("")}
       </p>
       {data.why.length || data.tradeoff ? (
@@ -41,7 +41,7 @@ export function OptionCard({ data, onReply }: CardProps<OptionCardData>) {
       ) : null}
       <FitDots score={data.fit_score} />
       <div className="card-actions">
-        <button className="btn primary" onClick={() => onReply(String(data.rank))}>Vote for this</button>
+        <button className="btn primary" onClick={() => onReply(String(data.rank))}>Choose this</button>
       </div>
       <p className="fine">
         {data.cancellation ? `${data.cancellation} · ` : ""}{data.merchant_name} <DemoTag />

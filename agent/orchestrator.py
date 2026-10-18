@@ -155,7 +155,23 @@ class Orchestrator:
                   payload={"tool": name, "ok": bool(result.get("ok")),
                            **({"code": result["error"].get("code")} if not result.get("ok") else {})})
         if result.get("ok"):
-            self.tool_results.append((name, result.get("data") or {}))
+            data = result.get("data") or {}
+            if name == 'save_buying_brief':
+                # Models can search before saving the brief. Adopt only matching
+                # quotes executed THIS turn, never older persisted suggestions.
+                for tool, batch in self.tool_results:
+                    if tool != 'search_options':
+                        continue
+                    for option in batch.get('options', []):
+                        record = Option.objects.filter(pk=option['id'], group=self.group).first()
+                        if (record and record.category == data['category']
+                                and option.get('group_size') == data['group_size']
+                                and (data.get('budget_per_person_cents') is None
+                                     or option['per_person_cents'] <= data['budget_per_person_cents'])):
+                            record.meta = {**record.meta, 'brief_revision':data['revision']}
+                            record.save(update_fields=['meta'])
+                            option.setdefault('meta', {})['brief_revision'] = data['revision']
+            self.tool_results.append((name, data))
         return result
 
     # ------------------------------------------------------------------ LLM loop
@@ -205,6 +221,11 @@ class Orchestrator:
         private = PhotonSession.objects.filter(member__group=self.group).exists()
         if os.getenv("DEMO_SCRIPTED") == "1" and not private:
             return self.run_scripted(actor, event, text) or [AgentMessage(text=safety.SAFE_TEXT_NO_TOOLS)]
+        if private and text:
+            from agent.private_actions import handle
+            direct = handle(self, actor, text)
+            if direct is not None:
+                return direct
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
         from chat.models import PhotonSession
         short_link_request = bool(re.fullmatch(
@@ -233,7 +254,7 @@ class Orchestrator:
                     scripted = self.run_scripted(actor, event, original_text)
                     if scripted:
                         return scripted
-                return [AgentMessage(text=FAILURE_TEXT)]
+                return [AgentMessage(text=("I’m having a slow moment connecting to my AI provider. Your message is saved. Try again shortly—or pick an option number or say ‘send me the link’ if we already have a shortlist. No payment was changed." if private else FAILURE_TEXT))]
             msg = resp.choices[0].message
             if not msg.tool_calls or force_text:
                 text = (msg.content or "").strip()
@@ -308,6 +329,11 @@ class Orchestrator:
             # Sharing instructions and organizer credentials belong to the
             # server-generated private attachment, never model narration.
             text = None
+        elif any(name == 'search_options' for name, data in self.tool_results):
+            from chat.models import PhotonSession
+            if PhotonSession.objects.filter(member__group=self.group).exists():
+                found = next(data.get('options', []) for name, data in reversed(self.tool_results) if name == 'search_options')
+                text = ('🔎 Your shortlist\n\nA few picks to consider. Reply with a number or name and I’ll make your plan link.\n\nDemo offers · payments are simulated.' if found else 'No supported merchant offers matched this search. We can still make a planning page with suggestions—say “send me the link”. No payment can open without a quote.')
         elif text and self.private_reply_problem(text):
             text = self.private_next_step()
         text = self.safe(text) if text else text
@@ -344,7 +370,7 @@ class Orchestrator:
                 plan = TripPlan.objects.filter(pk=data.get('plan_id'), source_group=self.group).first()
                 if plan:
                     note = 'This is planning-only until a supported merchant offer is attached.' if not plan.selected_option_id else 'Each buyer approves their own payment on the website; payments are simulated.'
-                    attached.append(AgentMessage(text='Your buying plan is ready. Open your organizer link and join with your name and number. For a group, copy the group invite from the page. '+note,
+                    attached.append(AgentMessage(text=f'✨ Good pick!\n\nYour plan for {plan.title} is ready.\n\nOpen your private organizer link below and join with your name and number. Then share the group invite from the page.\n\n'+note,
                         link=owner_url(plan), private_to_member_id=str(self.group.organizer_id)))
         out = [AgentMessage(text=text)] if text else []
         if not out and not attached and any(name=='save_buying_brief' for name,data in self.tool_results):

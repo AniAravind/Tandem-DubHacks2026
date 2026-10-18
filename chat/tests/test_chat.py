@@ -74,15 +74,13 @@ class ChatApiTest(TestCase):
     @mock.patch("chat.services.schedule_agent")
     def test_numeric_reply_votes_without_the_llm(self, schedule):
         from agent.fakes import FakeRulesEngine
-        patcher = mock.patch("agent.orchestrator.get_engine", side_effect=lambda gid=None: FakeRulesEngine(gid or self.group.id))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        engine = FakeRulesEngine(self.group.id)
-        engine.execute("search_options", {"category": "rental", "group_size": 6}, "agent")
-        engine.execute("start_vote", {"option_ids": ["op-pinecrest", "op-lakeview", "op-cedar"]}, "agent")
-        for who in ("Maya", "Priya", "Sam"):
-            self.post(who, "1")
-        schedule.assert_not_called()
+        with mock.patch("agent.orchestrator.get_engine", side_effect=lambda gid=None: FakeRulesEngine(gid or self.group.id)):
+            engine = FakeRulesEngine(self.group.id)
+            engine.execute("search_options", {"category": "rental", "group_size": 6}, "agent")
+            engine.execute("start_vote", {"option_ids": ["op-pinecrest", "op-lakeview", "op-cedar"]}, "agent")
+            for who in ("Maya", "Priya", "Sam"):
+                self.post(who, "1")
+            schedule.assert_not_called()
         self.post("Leo", "1")
         texts = list(ChatMessage.objects.filter(group=self.group, direction="out").values_list("text_redacted", flat=True))
         self.assertIn("🗳️ Pinecrest A-Frame wins, 4 votes to 0.", texts)

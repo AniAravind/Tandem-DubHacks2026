@@ -108,7 +108,7 @@ export default function ChatPage() {
     return <AppShell groupId={groupId}><main className="chat-page" aria-busy={!error}><p className="muted">{error ?? "Loading chat…"}</p></main></AppShell>;
   }
   return (
-    <AppShell groupId={groupId}><div className="page-topbar"><div className="breadcrumb">Your space<span>/</span>Group chat</div><Link className="text-link" to={`/g/${groupId}`}>View overview<Icon name="arrow"/></Link></div><main className="chat-page">
+    <AppShell groupId={groupId} planName={group.name}><div className="page-topbar"><div className="breadcrumb">Your space<span>/</span>Group chat</div><Link className="text-link" to={`/g/${groupId}`}>View overview<Icon name="arrow"/></Link></div><main className="chat-page">
       <header className="chat-header">
         <div>
           <p className="eyebrow">THE GROUP CONVERSATION</p><h1>{group.name}</h1>
