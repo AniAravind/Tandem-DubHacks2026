@@ -6,6 +6,7 @@ import Chat from "./chat/ChatPage";
 
 import Dashboard from "./dashboard/DashboardPage";
 import PlanPage from "./plans/PlanPage";
+import "./styles/system.css";   // last, so the shared design system overrides page styles
 
 export default function App() {
   return (

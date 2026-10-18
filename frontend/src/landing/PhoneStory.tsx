@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import tandemMark from "../assets/tandem-mark.png";
 
-// A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Around it,
-// the six friends join the plan and turn green as each one holds only their own share. Prices match the seeded
+// A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Prices match the seeded
 // Tahoe demo (payments are simulated).
 type Msg = { from: "me" | "tandem"; at: number; lines: string[]; link?: boolean; typing?: number };
 
@@ -15,11 +14,6 @@ const THREAD: Msg[] = [
   { from: "tandem", at: 0.63, typing: 0.04, lines: ["5 of 6 holds in. Nobody’s charged until everyone is."] },
   { from: "tandem", at: 0.76, typing: 0.04, lines: ["Booked 🎉 Pinecrest A-Frame, $175 each.", "Nobody fronted a cent."] },
 ];
-const FRIENDS = [
-  { name: "Maya", hold: 0.5 }, { name: "Priya", hold: 0.53 }, { name: "Sam", hold: 0.56 },
-  { name: "Leo", hold: 0.59 }, { name: "Alex", hold: 0.61 }, { name: "Jordan", hold: 0.72 },
-];
-const JOIN = 0.44;                                     // friends appear once the plan link is shared
 const CAPTIONS: [number, string][] = [
   [0.12, "Text Tandem like you’d text a friend."],
   [0.3, "It finds options that fit everyone’s budget."],
@@ -99,24 +93,25 @@ export default function PhoneStory() {
   const typing = THREAD.find((m) => m.typing && p >= m.at - m.typing && p < m.at);
   const lastMine = [...shown].reverse().find((m) => m.from === "me");
   const caption = [...CAPTIONS].reverse().find(([at]) => p >= at);
-  const booked = p >= THREAD[THREAD.length - 1].at;
   const rx = 58 * (1 - lift), rz = -24 * (1 - lift), ry = -16 + 6 * lift;
 
   return <section ref={section} className={`phone-story ${reduced ? "is-static" : ""}`} aria-label="How Tandem works, shown as an iMessage conversation">
     <div className="ps-stage">
       <div className="ps-copy">
         <div className="ps-hero" style={{ opacity: 1 - ease((p - 0.06) / 0.06), transform: `translateY(${-ease((p - 0.06) / 0.06) * 14}px)` }}>
-          <h1>Group plans, settled<br />in a text.</h1>
+          <h1>Group plans, settled in a text.</h1>
           <p>Everyone pays only their share. Nobody fronts the money.</p>
+          <div className="ps-actions"><Link className="btn primary" to="/chat/demo">Try the live demo</Link></div>
         </div>
-        <p className="ps-caption" key={caption?.[1]} style={{ opacity: caption ? 1 : 0 }}>
-          {caption && <><span>{CAPTIONS.indexOf(caption) + 1}/{CAPTIONS.length}</span>{caption[1]}</>}
-        </p>
+        <div className="ps-caption" style={{ opacity: caption ? 1 : 0 }}>
+          <div className="ps-progress" aria-hidden="true">{CAPTIONS.map(([at]) => <i key={at} className={p >= at ? "on" : ""} />)}</div>
+          <p key={caption?.[1]}>{caption?.[1]}</p>
+        </div>
       </div>
       <div className="ps-scene">
         <div className="ps-floor" style={{ transform: `translateX(-50%) scale(${0.7 + lift * 0.3}, ${1.6 - lift})`, opacity: 0.35 + lift * 0.3 }} aria-hidden="true" />
         <div className="ps-tilt" ref={tilt}>
-          <div className={`ps-phone ${booked ? "is-booked" : ""}`}
+          <div className="ps-phone"
             style={{ transform: `rotateX(calc(${rx}deg + var(--my, 0deg))) rotateY(calc(${ry}deg + var(--mx, 0deg))) rotateZ(${rz}deg) translateY(${(1 - lift) * 8}%)` }}>
             {Array.from({ length: 9 }, (_, i) => <div key={i} className="ps-slice" style={{ transform: `translateZ(${(i - 4) * 1.6}px)` }} aria-hidden="true" />)}
             <div className="ps-face ps-back" aria-hidden="true"><span className="ps-cams"><i /><i /><i /></span><img src={tandemMark} alt="" /></div>
@@ -149,14 +144,6 @@ export default function PhoneStory() {
             </div>
           </div>
         </div>
-        <ul className="ps-friends" aria-label="Friends in the plan">
-          {FRIENDS.map((f, i) => {
-            const joined = p >= JOIN + i * 0.008, held = p >= f.hold;
-            return <li key={f.name} className={`ps-friend ps-f${i} ${joined ? "is-in" : ""} ${held ? "is-held" : ""}`} aria-hidden={!joined}>
-              <span>{f.name[0]}</span><small>{f.name}</small>
-            </li>;
-          })}
-        </ul>
       </div>
       {p < 0.04 && !reduced && <span className="ps-scroll" aria-hidden="true">↓ scroll</span>}
     </div>

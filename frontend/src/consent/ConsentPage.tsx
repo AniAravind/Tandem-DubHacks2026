@@ -326,7 +326,7 @@ export default function ConsentPage() {
                   <PasskeyConfirm busy={busy} submitLabel={actionLabel} onAssert={(a) => run(confirming, a)} onCancel={() => { setConfirming(null); setError(""); }} />
                 ) : (
                   <div className="choice-row">
-                    <button className="btn consent-choice" type="button" disabled={busy || verifying} onClick={() => start(action)}>
+                    <button className="btn primary consent-choice" type="button" disabled={busy || verifying} onClick={() => start(action)}>
                       {verifying ? "Waiting for passkey…" : busy ? "Placing hold…" : actionLabel}
                     </button>
                     {verifying ? (
