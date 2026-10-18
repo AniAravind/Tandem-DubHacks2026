@@ -19,7 +19,9 @@ def health(request):
         redis.from_url(settings.REDIS_URL, socket_timeout=1, **kw).ping()
         out["redis"] = "ok"
     except Exception as e:
-        out["redis"] = f"error: {e.__class__.__name__}"   # not fatal in Phase 0
+        out["redis"] = f"error: {e.__class__.__name__}"
+        if not settings.CELERY_TASK_ALWAYS_EAGER:
+            out["status"] = "degraded"
     return JsonResponse(out, status=200 if out["status"] == "ok" else 503)
 
 

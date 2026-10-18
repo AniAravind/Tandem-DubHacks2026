@@ -34,7 +34,7 @@ class SimulatedVisaAgentGateway:
         if cls._default is None:
             from core.events import log_event_simulated
             cls._default = cls(on_event=log_event_simulated)
-            cls._default.hydrate_from_db()
+        cls._default.hydrate_from_db()
         return cls._default
 
     def hydrate_from_db(self) -> None:

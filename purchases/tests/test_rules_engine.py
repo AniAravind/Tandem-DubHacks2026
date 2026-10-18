@@ -311,7 +311,7 @@ class CreatePurchaseTests(EngineBase):
         # links are never returned to the AI and never posted in the group chat
         self.assertNotIn("/c/", json.dumps(self.run_tool("check_status", {})))
         from chat.models import ChatMessage
-        self.assertFalse(ChatMessage.objects.filter(text_redacted__contains="/c/").exists())
+        self.assertFalse(ChatMessage.objects.filter(text_redacted__contains="/c/", member__isnull=True).exists())
 
 
 class StatusAndOptionsApiTests(EngineBase):

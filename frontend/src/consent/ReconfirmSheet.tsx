@@ -18,7 +18,7 @@ export default function ReconfirmSheet({
             Your share changed {formatUsd(fromCents)} to {formatUsd(toCents)} (within your {formatUsd(capCents)} limit). Confirm?
           </p>
         )}
-        {!over && <button className="btn btn-primary" type="button" onClick={onConfirm}>Confirm with Face ID / passkey</button>}
+        {!over && <button className="btn btn-primary" type="button" onClick={onConfirm}>Confirm changed share (demo code)</button>}
         <button className="btn" type="button" onClick={onLeave}>Leave</button>
         <button className="btn" type="button" onClick={onClose}>Not now</button>
       </div>

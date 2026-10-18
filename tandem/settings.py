@@ -82,3 +82,8 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 # Merchant: "direct" = in-process stand-in (tests, and until the real mock merchant is on main); "http" = real calls.
 MERCHANT_MODE = os.getenv("MERCHANT_MODE", "direct")
 MERCHANT_BASE_URL = os.getenv("MERCHANT_BASE_URL", "http://localhost:8000/merchants")
+
+# Shared cache is required across Heroku web and worker processes.
+if os.getenv("DYNO") or os.getenv("TANDEM_SHARED_CACHE") == "1":
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL,
+        "OPTIONS": {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else {}}}

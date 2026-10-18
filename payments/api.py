@@ -43,7 +43,7 @@ def _header_member(request) -> str:
 
 @public_consent(["GET"])
 def consent_detail(request, token):
-    return Response(svc.get_payload(token, _header_member(request)))
+    return Response(svc.get_payload(token, _header_member(request), request.query_params.get("cap_cents")))
 
 
 @public_consent(["POST"])

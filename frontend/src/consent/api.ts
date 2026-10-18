@@ -27,6 +27,7 @@ export type ConsentPayload = {
   share_id: string;
   group_id: string;
   share_status: string;
+  reconfirmation?: {from_cents: number; to_cents: number; available: boolean} | null;
 };
 
 export type ApiError = { error: { code: string; message: string; decline_code?: string } };
@@ -57,12 +58,12 @@ async function req(path: string, init: RequestInit = {}, memberId?: string) {
   return data;
 }
 
-export function getConsent(token: string) {
-  return req(`/api/v1/consent/${token}`) as Promise<ConsentPayload>;
+export function getConsent(token: string, cap?: number) {
+  return req(`/api/v1/consent/${token}${cap === undefined ? "" : `?cap_cents=${cap}`}`) as Promise<ConsentPayload>;
 }
 
-export function tokenize(token: string, last4: string) {
-  const rand = Math.random().toString(36).slice(2, 6);
+export function tokenize(token: string, last4: string, attempt?: string) {
+  const rand = attempt ?? crypto.randomUUID().replaceAll("-", "");
   return req(`/api/v1/consent/${token}/tokenize`, {
     method: "POST",
     body: JSON.stringify({ transient_card_token: `tt_sim_${last4}_${rand}` }),

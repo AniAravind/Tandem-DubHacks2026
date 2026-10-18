@@ -96,7 +96,7 @@ class Orchestrator:
         if foreign:
             return self._reject(name, "unknown_id", "Use only ids from group_state or earlier tool results.")
         result = self.engine.execute(name, args, actor)
-        log_event(EventType.AGENT_TOOL_CALLED, actor="agent", group_id=self.group.id,
+        log_event(EventType.AGENT_TOOL_CALLED if hasattr(self.engine, "snapshot") else "agent.tool_result", actor="agent", group_id=self.group.id,
                   payload={"tool": name, "ok": bool(result.get("ok")),
                            **({"code": result["error"].get("code")} if not result.get("ok") else {})})
         if result.get("ok"):
@@ -121,13 +121,14 @@ class Orchestrator:
             return self.run_scripted(actor, event, text) or [AgentMessage(text=safety.SAFE_TEXT_NO_TOOLS)]
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
         calls = repairs = 0
+        original_text = text
         text = None
         while True:
-            force_text = calls >= MAX_TOOL_CALLS or repairs > MAX_REPAIRS
+            force_text = calls >= MAX_TOOL_CALLS or repairs >= MAX_REPAIRS
             resp = self._call(messages, **({"tool_choice": "none"} if force_text else {}))
             if resp is None:
                 if settings.DEMO_MODE and not self.tool_results:     # Grok unreachable: the demo script is the backup
-                    scripted = self.run_scripted(actor, event, text)
+                    scripted = self.run_scripted(actor, event, original_text)
                     if scripted:
                         return scripted
                 return [AgentMessage(text=FAILURE_TEXT)]
@@ -169,7 +170,31 @@ class Orchestrator:
     def compose(self, text: str | None) -> list[AgentMessage]:
         text = self.safe(text) if text else text
         labels = {o["id"]: o["title"] for name, d in self.tool_results if name == "search_options" for o in d.get("options", [])}
-        attached = [m for name, d in self.tool_results for m in cards.cards_for(name, d, labels, self.group.timezone)]
+        presentation = []
+        for name, data in self.tool_results:
+            d = dict(data)
+            if name == "create_purchase" and not hasattr(self.engine, "snapshot"):
+                purchase = Purchase.objects.filter(pk=d.get("purchase_id"), group=self.group).select_related("option").first()
+                if purchase:
+                    d.update(title=purchase.option.title, total_cents=purchase.total_cents,
+                             shares=[{"member_id": str(sh.member_id), "display_name": sh.member.display_name,
+                                      "status": sh.status, "amount_cents": sh.amount_cents}
+                                     for sh in purchase.shares.select_related("member").all()])
+            if name == "add_expense" and not hasattr(self.engine, "snapshot"):
+                from purchases.models import Expense
+                expense = Expense.objects.filter(pk=d.get("expense_id"), group=self.group).select_related("payer").first()
+                if expense:
+                    d["payer"] = expense.payer.display_name
+            if name == "start_vote" and not hasattr(self.engine, "snapshot"):
+                vote = Vote.objects.filter(pk=d.get("vote_id"), group=self.group).first()
+                if vote:
+                    choices = []
+                    for choice in vote.choices:
+                        option = Option.objects.filter(pk=choice.get("option_id"), group=self.group).first()
+                        choices.append({**choice, "per_person_cents": (option.meta or {}).get("per_person_cents", 0) if option else 0})
+                    d["choices"] = choices
+            presentation.append((name, d))
+        attached = [m for name, d in presentation for m in cards.cards_for(name, d, labels, self.group.timezone)]
         out = [AgentMessage(text=text)] if text else []
         public = [m for m in attached if not m.private_to_member_id]
         if out and len(public) == 1:                                # a single card rides on the text message

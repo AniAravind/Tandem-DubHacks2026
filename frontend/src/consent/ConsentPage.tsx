@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import CanCanNever from "./CanCanNever";
 import DeclineSheet from "./DeclineSheet";
@@ -23,7 +23,7 @@ import {
 import { formatUsd } from "./money";
 import "./consent.css";
 
-type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden";
+type Screen = "loading" | "form" | "held" | "declined" | "expired" | "forbidden" | "captured" | "released" | "refunded";
 
 export default function ConsentPage() {
   const { token = "" } = useParams();
@@ -39,6 +39,18 @@ export default function ConsentPage() {
   const [needOtp, setNeedOtp] = useState(false);
   const [message, setMessage] = useState("");
   const errorId = useId();
+  const cardToken = useRef<{last4: string; transient: string; id?: string} | null>(null);
+  function applyStatus(payload: ConsentPayload) {
+    setData(payload);
+    const status = payload.share_status;
+    setScreen(status === "held" ? "held" : status === "captured" ? "captured" : status === "released" ? "released" : status === "refunded" ? "refunded" : status === "declined" ? "declined" : "form");
+  }
+  async function refresh() { applyStatus(await getConsent(token)); }
+  useEffect(() => {
+    if (screen !== "held") return;
+    const timer = setInterval(() => { refresh().catch(() => undefined); }, 2000);
+    return () => clearInterval(timer);
+  }, [screen, token]);
 
   useEffect(() => {
     let alive = true;
@@ -47,7 +59,7 @@ export default function ConsentPage() {
         if (!alive) return;
         setData(payload);
         setCap(payload.default_cap_cents);
-        setScreen(payload.share_status === "held" ? "held" : "form");
+        applyStatus(payload);
       })
       .catch((err: { status?: number; message?: string }) => {
         if (!alive) return;
@@ -64,16 +76,22 @@ export default function ConsentPage() {
     try {
       const digits = pan.replace(/\D/g, "");
       const cardLast4 = last4FromPan(digits);
-      const tok = await tokenize(token, cardLast4);
-      setLast4(tok.card.last4);
+      if (!cardToken.current || cardToken.current.last4 !== cardLast4) cardToken.current = {last4: cardLast4, transient: crypto.randomUUID().replaceAll("-", "")};
+      const attempt = cardToken.current;
+      if (!attempt.id) {
+        const tok = await tokenize(token, cardLast4, attempt.transient);
+        attempt.id = tok.agent_token_id;
+        setLast4(tok.card.last4);
+      }
+      const rendered = await getConsent(token, cap);
       await approve(token, {
-        agent_token_id: tok.agent_token_id,
+        agent_token_id: attempt.id!,
         cap_cents: cap,
-        consent_text_sha256: data.consent_text_sha256,
+        consent_text_sha256: rendered.consent_text_sha256,
         assertion,
       });
       if (navigator.vibrate) navigator.vibrate(10);
-      setScreen("held");
+      await refresh();
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string };
       setError(e.message || "Something went wrong. Nothing was charged.");
@@ -135,8 +153,9 @@ export default function ConsentPage() {
           <p className="muted">The group only sees that a spot opened up.</p>
         </section>
       )}
+      {(["captured", "released", "refunded"] as Screen[]).includes(screen) && <section className="consent-card"><h1>{screen === "captured" ? "Paid — booking confirmed." : screen === "refunded" ? "Your share was refunded." : "Hold released."}</h1><p>Simulated payment: no real money moves.</p></section>}
       {screen === "held" && data && (
-        <HeldSuccess shareCents={data.share_cents} last4={last4} splitCount={data.purchase.split_count} groupId={data.group_id} />
+        <HeldSuccess shareCents={data.share_cents} last4={last4} splitCount={data.purchase.split_count} groupId={data.group_id} onLeave={async () => { await leaveShare(data.share_id, data.member.id); await refresh(); }} />
       )}
 
       {screen === "form" && data && (
@@ -152,7 +171,7 @@ export default function ConsentPage() {
           {data.offers[0] && (
             <p>Offer applied: −{formatUsd(Math.round((data.share_cents * data.offers[0].percent_back) / 100))} (simulated)</p>
           )}
-          <MandateBox data={data} cap={cap} onCap={setCap} />
+          <MandateBox data={data} cap={cap} onCap={(value) => { setCap(value); getConsent(token, value).then(setData).catch(() => undefined); }} />
           <CanCanNever can={data.can} canNever={data.can_never} />
           <SecureCardField pan={pan} onPan={setPan} errorId={error ? errorId : undefined} />
           {error && (
@@ -167,7 +186,7 @@ export default function ConsentPage() {
             {needOtp && <PasskeyConfirm busy={busy} onAssert={place} />}
             <button className="btn" type="button" disabled={busy} onClick={() => setShowDecline(true)}>Not for me</button>
             <p className="muted">Leave anytime before booking.</p>
-            <button className="btn" type="button" onClick={() => setShowReconfirm(true)}>Share changed?</button>
+            {data.reconfirmation?.available ? <button className="btn" type="button" onClick={() => setShowReconfirm(true)}>Review changed share</button> : <p className="muted">Share changes require a new private link and fresh consent. Reconfirmation is awaiting the backend integration.</p>}
           </div>
         </>
       )}
@@ -175,13 +194,15 @@ export default function ConsentPage() {
       {showDecline && <DeclineSheet onPick={onDecline} onClose={() => setShowDecline(false)} />}
       {showReconfirm && data && (
         <ReconfirmSheet
-          fromCents={data.share_cents}
-          toCents={data.share_cents}
+          fromCents={data.reconfirmation?.from_cents ?? data.share_cents}
+          toCents={data.reconfirmation?.to_cents ?? data.share_cents}
           capCents={cap}
           onConfirm={async () => {
-            await reconfirmShare(data.share_id, data.member.id, { method: "otp", code: DEMO_OTP });
-            setShowReconfirm(false);
-            setScreen("held");
+            try {
+              await reconfirmShare(data.share_id, data.member.id, { method: "otp", code: DEMO_OTP });
+              setShowReconfirm(false);
+              await refresh();
+            } catch (err) { setError(err instanceof Error ? err.message : "Could not confirm the changed share."); setShowReconfirm(false); }
           }}
           onLeave={async () => {
             await leaveShare(data.share_id, data.member.id);

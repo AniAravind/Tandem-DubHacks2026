@@ -113,6 +113,8 @@ class DirectMerchantClient:
         if info["keyid"] != signing.KEY_ID:
             return _error(401, "unknown_agent", "Unknown key id")
         digest = headers.get("Content-Digest")
+        if expected_tag == "agent-payer-auth" and "content-digest" not in info["components"]:
+            return _error(401, "digest_mismatch", "Checkout and cancel require a signed content digest")
         if "content-digest" in info["components"] and digest != signing.content_digest(body):
             return _error(401, "digest_mismatch", "Body does not match signed Content-Digest")
         try:
