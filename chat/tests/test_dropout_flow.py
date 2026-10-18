@@ -45,3 +45,14 @@ class DropoutChatFlowTests(FallbackBase):
         new_cards = [m.card["type"] for m in ChatMessage.objects.filter(group=self.group, direction="out")[before:] if m.card]
         self.assertEqual(new_cards.count("ExpenseCard"), 1)
         self.assertIsNotNone(demo_script)
+
+    def test_demo_reset_works_after_a_fallback_replaced_shares(self):
+        from purchases import demo
+        from purchases.models import Share
+        self.hold_everyone_but_jordan()
+        self.vote_all(self.propose()["vote_id"], "cheaper")
+        self.assertTrue(Share.objects.filter(purchase=self.purchase, superseded_by__isnull=False).exists())
+        result = demo.reset_seed()                                 # used to fail: one_active_share_per_member
+        self.assertEqual(result["members"], 6)
+        self.assertFalse(Purchase.objects.filter(group=self.group).exists())
+        self.assertFalse(Share.objects.exists())

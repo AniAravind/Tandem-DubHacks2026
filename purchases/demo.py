@@ -118,7 +118,16 @@ def reset_seed(body: dict | None = None) -> dict:
     SignedRequest.objects.all().delete()
     Expense.objects.filter(group=group).delete()
     Vote.objects.filter(group=group).delete()
-    purchases.delete()                                        # shares go with them
+    # After a fallback, old shares point at their replacements. Deleting a replacement first would un-supersede
+    # the old share and briefly give one member two active shares (a unique-constraint error), so go oldest first.
+    shares = Share.objects.filter(purchase__in=purchases)
+    while True:
+        replaced = shares.filter(superseded_by__isnull=False)
+        oldest = replaced.exclude(id__in=replaced.values("superseded_by"))
+        if not oldest.exists():
+            break
+        oldest.delete()
+    purchases.delete()                                        # the remaining shares go with them
     Option.objects.filter(group=group).delete()
     ChatMessage.objects.filter(group=group).delete()
     InviteLink.objects.filter(group=group).delete()
