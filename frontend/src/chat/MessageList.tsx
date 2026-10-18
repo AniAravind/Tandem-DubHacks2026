@@ -1,4 +1,6 @@
 import { Fragment, type ReactNode } from "react";
+import { plainText } from "../../../shared/message-text.mjs";
+import tandemMark from "../assets/tandem-mark.png";
 import { CardView } from "../components/cards";
 import type { ChatMessage } from "./types";
 
@@ -8,6 +10,15 @@ function linkify(text: string): ReactNode[] {
     /^(https?:\/\/\S+|\/(c|g|p|chat)\/\S+)$/.test(part)
       ? <a key={i} href={part} title={part}>{/\/c\//.test(part) ? "Open private consent page →" : "Open link ↗"}</a>
       : <Fragment key={i}>{part}</Fragment>);
+}
+
+function MessageBody({text}: {text:string}) {
+  const blocks = plainText(text).split(/\n\n+/);
+  return <>{blocks.map((block,index) => {
+    const lines=block.split('\n');
+    const title=index===0 && lines[0].length<80 && blocks.length>1 && !/^https?:/.test(lines[0]);
+    return <p key={index}>{lines.map((line,i)=><Fragment key={i}>{i>0?'\n':null}{title&&i===0?<strong className="message-title">{linkify(line)}</strong>:linkify(line)}</Fragment>)}</p>;
+  })}</>;
 }
 
 // Vote and funding cards are re-posted as they change; only the newest copy of each is shown.
@@ -38,11 +49,11 @@ export function MessageList({ messages, meId, onReply, consentUrl, onDemoShare }
         const who = m.direction === "out" ? "Tandem" : m.member?.display_name ?? "Someone";
         return (
           <li key={m.id} className={`msg ${m.direction === "out" ? "agent" : mine ? "mine" : "member"}${m.private ? " private" : ""}`}>
-            <span className="message-initial" aria-hidden="true">{m.direction === "out" ? "t." : who.slice(0,1)}</span>
+            <span className="message-initial" aria-hidden="true">{m.direction === "out" ? <img src={tandemMark} alt=""/> : who.slice(0,1)}</span>
             {m.text ? (
               <div className="bubble">
                 <span className="who">{who}{m.private ? " · only you see this" : ""}</span>
-                <p>{linkify(m.text)}</p>
+                {m.direction === "out" ? <MessageBody text={m.text}/> : <p>{linkify(m.text)}</p>}
               </div>
             ) : null}
             {showCard && m.card ? <CardView card={m.card} onReply={onReply} consentUrl={consentUrl} meId={meId} onDemoShare={onDemoShare} /> : null}

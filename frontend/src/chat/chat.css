@@ -97,3 +97,5 @@
 .chat-page .btn{border-radius:7px;font-size:12px}.chat-page .btn.primary{background:var(--tandem-600)}
 
 .signed-in{font-size:11px;color:var(--ink-600)}.signed-in strong{font-weight:550;color:var(--ink-900)}
+
+.message-initial img{width:23px;height:23px;object-fit:contain}.bubble p+p{margin-top:12px}.message-title{font-size:15px;font-weight:650;line-height:1.5}

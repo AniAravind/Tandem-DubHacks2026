@@ -1,13 +1,15 @@
 import { createHmac } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
+import { plainText } from "../shared/message-text.mjs";
+
 export function renderMessage(message) {
-  const lines = [message.text || ''];
+  const lines = [plainText(message.text || '')];
   const card = message.card;
   const d = card?.data || {};
   const money = value => Number.isInteger(value) ? `$${(value / 100).toFixed(2)}` : '';
-  if (d.title) lines.push(d.title);
-  if (card?.type === 'OptionCard') lines.push(`${money(d.per_person_cents)} each · ${money(d.total_cents)} total`, ...(d.why || []));
+  if (d.title) lines.push(card?.type === 'OptionCard' && Number.isInteger(d.rank) ? `${d.rank}. ${plainText(d.title)}` : plainText(d.title));
+  if (card?.type === 'OptionCard') lines.push(`${money(d.per_person_cents)} each · ${money(d.total_cents)} total`, ...(d.features || []).slice(0, 3).map(f => f.replaceAll('_', ' ')), ...(d.why || []));
   if (d.choices || d.options) {
     for (const choice of d.choices || d.options) lines.push(`${choice.key}. ${choice.label}${Number.isInteger(choice.per_person_cents) ? ` · ${money(choice.per_person_cents)} each` : ''}`);
     lines.push(d.winner_key ? `Winner: ${d.winner_key}` : 'Reply with the option number to vote.');
@@ -18,7 +20,7 @@ export function renderMessage(message) {
   if (d.dashboard_url) lines.push(d.dashboard_url);
   if (card && !lines.some(Boolean)) lines.push('Your trip has an update. Ask Tandem for its status.');
   if (d.simulated) lines.push('(Simulated payments)');
-  return lines.filter(Boolean).join('\n');
+  return plainText(lines.filter(Boolean).join('\n'));
 }
 
 export async function main() {

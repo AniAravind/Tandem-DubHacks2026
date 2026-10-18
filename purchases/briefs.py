@@ -55,7 +55,10 @@ def save(member, args):
              'recommendations':[redact(v) for v in recommendations]}
     previous = dict(session.planning_state)
     revision = previous.pop('revision', None)
-    state['revision'] = revision if previous == state and revision else uuid.uuid4().hex
+    # Presentation edits must not invalidate an already displayed shortlist.
+    constraints = ('goal', 'category', 'group_size', 'budget_per_person_cents', 'requirements')
+    unchanged = all(previous.get(key) == state.get(key) for key in constraints)
+    state['revision'] = revision if unchanged and revision else uuid.uuid4().hex
     session.planning_state = state
     session.save(update_fields=['planning_state'])
     return state

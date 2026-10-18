@@ -26,3 +26,13 @@ The private Photon assistant now saves an explicit buying brief per conversation
 Run `python manage.py seed_buying_catalog` once after deployment to add clearly simulated gift offers. This command preserves existing groups, users, offers, and purchases. All checkout and authentication remain simulated. Generic planning does not imply live inventory or purchasing support from arbitrary merchants.
 
 Verification: backend coverage includes persisted-price reply filtering, goal changes, stale-option rejection, arbitrary-category planning with payment rejection, single-buyer gift capture, and four-buyer gift capture. Real Groq verification exercised gift → priced plan/private link, then telescope → separate solo planning page/private link.
+
+## Choice handling and message presentation
+
+Private number/ordinal/exact-title replies select a current saved option and publish its private organizer link without an AI request. Numeric Photon input is handled during ingestion, so provider limits and Celery delays cannot make it repeat the shortlist. Duplicate provider receipts remain deduplicated, and repeated selections reuse the plan. Invalid or superseded choices ask for a valid current selection; they never silently choose a different offer.
+
+Fresh search results stay associated with the current buying brief even when the model saves the brief after searching. Only matching results executed in that same turn are adopted; older persisted options remain superseded. Updating summary/recommendation copy alone preserves the revision. Older queued private turns are dropped when a newer user input has arrived, so they cannot bury a newly published link.
+
+New private search presentations use a short server-generated title and numbered cards with authoritative prices. `shared/message-text.mjs` cleans legacy Markdown for iMessage and web chat, preserves signed URLs, and converts pipe tables into readable numbered entries. Web chat adds visual title/paragraph hierarchy; iMessage uses plain title lines because text messages do not interpret Markdown. The assistant uses a warm, lightly playful voice with restrained emojis and labels catalog offers as simulated.
+
+The frontend uses the supplied navy emblem without embedded lettering in headers, chat avatars, and favicon. The transparent mark was prepared with the built-in imagegen tool from the supplied reference (prompt: isolate the navy emblem; preserve geometry; remove lettering and paper background).

@@ -16,3 +16,22 @@ test('funding status uses actual hold amounts and simulated label', () => {
   assert.match(text, /Aryan: held/);
   assert.match(text, /Simulated payments/);
 });
+
+test('iMessage headings and bold become clean plain-text titles', () => {
+  assert.equal(renderMessage({text:'## 🎁 A gift for Rishab\n\n**Good pick!**\nChoose `1`.'}), '🎁 A gift for Rishab\n\nGood pick!\nChoose 1.');
+});
+test('legacy markdown tables become numbered readable options', () => {
+  const text=renderMessage({text:'| # | Title | Cost per person |\n|---|---|---|\n| 1 | **Game night** | **$5.00** |\n| 2 | Coffee | $12.00 |'});
+  assert.match(text,/1\. Game night\nCost per person: \$5.00/);
+  assert.match(text,/2\. Coffee/);
+  assert.doesNotMatch(text,/\||\*\*/);
+});
+test('option cards expose the same selection number as the saved rank', () => {
+  const text=renderMessage({card:{type:'OptionCard',data:{rank:2,title:'Coffee tasting gift box',per_person_cents:1200,total_cents:6000,features:['gift_wrap']}}});
+  assert.match(text,/^2\. Coffee tasting gift box/);
+  assert.match(text,/gift wrap/);
+});
+test('signed URL characters are never modified by formatting', () => {
+  const url='https://example.com/p/id?owner=ab__cd__ef&x=1';
+  assert.equal(renderMessage({text:`✨ Your plan\n${url}`}),`✨ Your plan\n${url}`);
+});

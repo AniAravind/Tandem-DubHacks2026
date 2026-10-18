@@ -129,11 +129,28 @@ def run_agent(group_id, member_id=None, event: dict | None = None, message_id=No
     if message_id and inbound:
         stored = ChatMessage.objects.get(pk=message_id, group_id=group_id, member_id=member_id, direction="in")
         inbound.text = stored.text_redacted
-    post_all(group_id, orchestrator.run(group_id, inbound, event))
+        # A queued private turn can become obsolete while the user chooses an
+        # option synchronously. Never let its old shortlist bury the plan link.
+        from chat.models import PhotonSession
+        private = PhotonSession.objects.filter(member_id=member_id, member__group_id=group_id).exists()
+        if private and ChatMessage.objects.filter(group_id=group_id, direction="in", seq__gt=stored.seq).exists():
+            return
+    replies = orchestrator.run(group_id, inbound, event)
+    if message_id and inbound and private and ChatMessage.objects.filter(group_id=group_id, direction="in", seq__gt=stored.seq).exists():
+        return
+    post_all(group_id, replies)
 
 
 # ------------------------------------------------------------------ "1" / "2" / "3" replies go to the ballot, no LLM
 def handle_vote_reply(group_id, member_id, key: str) -> bool:
+    from chat.models import PhotonSession
+    if PhotonSession.objects.filter(member_id=member_id, member__group_id=group_id).exists():
+        from agent.orchestrator import Orchestrator
+        from agent.private_actions import handle
+        direct = handle(Orchestrator(group_id), f'member:{member_id}', key)
+        if direct is not None:
+            post_all(group_id, direct)
+            return True
     from purchases.models import Vote
     vote = Vote.objects.filter(group_id=group_id, status="open").order_by("-created_at").first()
     if vote:
