@@ -86,3 +86,36 @@ p.quiet-empty{font-size:15px}
 .workspace-label,.sidebar-bottom,.sidebar-trip small{display:none}
 .consent-choice.primary,.consent-choice.primary:hover:not(:disabled){background:#000;color:#fff;border-color:#000}
 .consent-choice.primary:hover:not(:disabled){background:#333}
+
+/* ---- accent: teal (friendly, calm, money-safe), used for actions and progress only ---- */
+:root{--accent:#0f6e56;--accent-hover:#085041;--accent-mid:#1d9e75;--accent-soft:#e1f5ee;--accent-ink:#085041}
+.btn.primary,.btn-primary,.consent-choice.primary,.consent-choice.primary:hover:not(:disabled){background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover,.btn-primary:hover,.consent-choice.primary:hover:not(:disabled){background:var(--accent-hover)}
+.btn{border-radius:12px}
+.ring-fill{stroke:var(--accent-mid)}.ring-track{stroke:var(--accent-soft)}
+.hold-note{background:var(--accent-soft);color:var(--accent-ink);border-radius:10px;font-size:14px;padding:10px 12px}
+.quiet-start{background:#f3faf7}
+.sidebar nav a.active{background:var(--accent-soft);color:var(--accent-ink)}
+.landing-try{background:var(--accent)}
+.ps-progress i.on{background:var(--accent-mid)}
+
+/* ---- payment page, option C: group progress first ---- */
+.group-progress{margin-bottom:18px}
+.gp-from{margin:0 0 14px;font-size:15px;color:#5e5e5e}.gp-from strong{color:#000;font-weight:600}
+.gp-head{display:flex;align-items:center;gap:16px}
+.gp-ring{width:72px;height:72px;flex-shrink:0}
+.gp-track,.gp-fill{fill:none;stroke-width:7}.gp-track{stroke:var(--accent-soft)}.gp-fill{stroke:var(--accent-mid);stroke-linecap:round;transition:stroke-dasharray .5s}
+.gp-ring text{font:600 15px Inter,system-ui,sans-serif;fill:var(--accent-ink)}
+.gp-head h1{margin:0;font-size:26px;line-height:1.15;letter-spacing:-.03em}
+.gp-head p{margin:4px 0 0;color:#5e5e5e;font-size:15px}
+.gp-seats{list-style:none;padding:0;margin:16px 0 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:8px;max-width:340px}
+.gp-seats li{aspect-ratio:1;border-radius:50%;background:#f1f1f1;display:grid;place-items:center;font-size:12px;font-weight:600;color:#8a8a8a}
+.gp-seats li.in{background:var(--accent-mid);color:#fff}
+.gp-seats li.me{background:#fff;border:2px dashed var(--accent-mid);color:var(--accent-ink);font-size:11px}
+.gp-seats li.in:nth-last-child(n){animation:gp-pop .4s ease-out backwards}
+.share-summary{background:#f6f6f6;border:0;border-radius:16px;padding:18px;margin:6px 0 18px}
+.share-summary .kicker{font-size:14px;color:#5e5e5e;margin:0}
+.share-amount{font-size:40px;font-weight:700;letter-spacing:-.03em;margin:2px 0}
+.share-meta{font-size:14px;color:#5e5e5e;margin:0 0 12px}
+@keyframes gp-pop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+@media(max-width:700px){.gp-head h1{font-size:24px}.gp-ring{width:64px;height:64px}.share-amount{font-size:36px}}

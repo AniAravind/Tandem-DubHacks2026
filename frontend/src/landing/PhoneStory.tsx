@@ -121,7 +121,7 @@ export default function PhoneStory() {
                 <StatusBar />
                 <header className="im-head">
                   <span className="im-back" aria-hidden="true">‹</span>
-                  <div className="im-contact"><span className="im-avatar" aria-hidden="true">🤝</span><b>Tandem <i aria-hidden="true">›</i></b></div>
+                  <div className="im-contact"><span className="im-avatar"><img src={tandemMark} alt="" /></span><b>Tandem <i aria-hidden="true">›</i></b></div>
                   <svg className="im-video" viewBox="0 0 24 16" aria-hidden="true"><rect x="1" y="2" width="15" height="12" rx="3" /><path d="m17 6.5 5-3v9l-5-3z" /></svg>
                 </header>
                 <div className="im-thread" aria-live="polite" style={{ paddingBottom: `calc(8px + ${outro * 44}%)` }}>

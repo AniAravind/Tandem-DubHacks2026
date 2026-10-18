@@ -4,6 +4,7 @@ import CanCanNever from "./CanCanNever";
 import DeclineSheet from "./DeclineSheet";
 import HeldSuccess from "./HeldSuccess";
 import ListingHero from "./ListingHero";
+import GroupProgress from "./GroupProgress";
 import MandateBox from "./MandateBox";
 import PasskeyConfirm from "./PasskeyConfirm";
 import { requestPasskey } from "./passkey";
@@ -219,7 +220,7 @@ export default function ConsentPage() {
   const change = data?.reconfirmation;
   const quickConfirm = Boolean(change?.within_cap && change.available);
   const action: Action = quickConfirm ? "reconfirm" : "approve";
-  const actionLabel = data ? (quickConfirm ? `Confirm ${formatUsd(data.share_cents)}` : `Approve & hold ${formatUsd(data.share_cents)}`) : "";
+  const actionLabel = data ? (quickConfirm ? `Confirm ${formatUsd(data.share_cents)}` : `I’m in · hold ${formatUsd(data.share_cents)}`) : "";
 
   return (
     <main className="consent-page">
@@ -283,16 +284,9 @@ export default function ConsentPage() {
       {screen === "form" && data && (
         <div className="consent-form-grid">
           <div className="consent-col">
-            <section className="consent-intro" aria-labelledby="consent-title">
-              <h1 id="consent-title">Hi {data.member.display_name}, here’s your share.</h1>
-              <p className="consent-invitation">
-                {data.invited_by && data.invited_by !== data.member.display_name ? `${data.invited_by} invited you to ` : "You’re organizing "}
-                <strong>{data.group_name}</strong>.
-              </p>
-              <ListingHero photoUrl={data.purchase.photo_url} />
-              <h2 className="consent-listing-title">{data.purchase.title}</h2>
-              <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")}</p>
-            </section>
+            <GroupProgress data={data} />
+            <ListingHero photoUrl={data.purchase.photo_url} />
+            <ShareSummary data={data} />
             <section className="consent-promises" aria-label="What Tandem can and can never do">
               <CanCanNever can={data.can} canNever={data.can_never} />
             </section>
@@ -306,7 +300,6 @@ export default function ConsentPage() {
                   Your last card wasn’t approved. Nothing was charged. Try a different card.{triesLeft(data.attempts_left)}
                 </p>
               )}
-              <ShareSummary data={data} />
               {!quickConfirm && (
                 <MandateBox data={data} cap={cap} onCap={(value) => { setCap(value); getConsent(token, value).then(setData).catch(() => undefined); }} />
               )}
