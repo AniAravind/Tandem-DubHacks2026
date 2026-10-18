@@ -1,6 +1,9 @@
 """Builds what Grok sees: rules, server-side group state (never budgets), and the chat wrapped as untrusted data."""
 import json
 from collections import Counter
+from zoneinfo import ZoneInfo
+
+from django.utils import timezone
 
 from chat.models import ChatMessage
 from core.models import Group
@@ -19,6 +22,7 @@ def build_group_state(group: Group, engine=None, event: dict | None = None) -> d
     members = list(group.members.filter(status="active").order_by("created_at", "display_name"))
     wants = Counter(f for m in members for f in (m.prefs or {}).get("must_haves", []))
     state = {
+        "current_date": timezone.localdate(timezone=ZoneInfo(group.timezone)).isoformat(),
         "group": {"id": str(group.id), "name": group.name, "timezone": group.timezone},
         "members": [{"id": str(m.id), "handle": handle(m.display_name), "display_name": m.display_name, "role": m.role}
                     for m in members],

@@ -4,7 +4,7 @@
     "parameters": {"type": "object", "additionalProperties": false, "required": ["category", "group_size"],
       "properties": {
         "category": {"type": "string", "enum": ["rental", "passes", "flights", "furniture", "electronics", "gift_bundle"]},
-        "budget_per_person_max": {"type": "number", "minimum": 0, "maximum": 5000},
+        "budget_per_person_max": {"type": "number", "minimum": 0, "maximum": 5000, "description": "Maximum budget per person in USD dollars, NOT cents. For a $300 budget pass 300, never 30000. This is a search filter, not a spending authorization."},
         "dates": {"type": "object", "additionalProperties": false,
                   "properties": {"start": {"type": "string", "format": "date"}, "end": {"type": "string", "format": "date"}}},
         "group_size": {"type": "integer", "minimum": 2, "maximum": 20},
