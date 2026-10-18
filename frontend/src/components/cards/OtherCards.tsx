@@ -1,16 +1,16 @@
 import { usd, usdExact } from "../../api/client";
 import type { BookingConfirmedData, ExpenseCardData } from "../../types/contracts";
-import { SimBadge, type CardProps } from "./common";
+import { type CardProps } from "./common";
 
 export function BookingConfirmed({ data }: CardProps<BookingConfirmedData>) {
   return (
-    <article className="card booking-card" aria-label="Booking confirmed">
+    <article className="card booking-card" aria-label="Plan confirmed">
       <div className="card-row">
-        <h3 className="card-title"><span aria-hidden="true">🎉 </span>Booked: {data.title}</h3>
-        <SimBadge>SIMULATED PAYMENT</SimBadge>
+        <h3 className="card-title"><span aria-hidden="true">🎉 </span>Plan confirmed: {data.title}</h3>
+
       </div>
-      <p>{data.dates} · Confirmation <strong>{data.booking_ref}</strong></p>
-      <p className="money">Paid {usd(data.per_person_cents)} each</p>
+      <p>{data.dates} · Plan reference <strong>{data.booking_ref}</strong></p>
+      <p className="money">Approved share: {usd(data.per_person_cents)} each</p>
       <p className={data.signature_verified ? "ok" : "bad"}>
         <span aria-hidden="true">{data.signature_verified ? "✓ " : "✕ "}</span>
         {data.signature_verified ? "Signed agent checkout verified" : "Signature not verified"}

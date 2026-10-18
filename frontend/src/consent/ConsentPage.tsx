@@ -225,7 +225,7 @@ export default function ConsentPage() {
     <main className="consent-page">
       <header className="consent-header">
         <Link to="/" className="brand"><Mark /><span>tandem<span className="brand-period">.</span></span></Link>
-        <span className="sim-badge">SIMULATED PAYMENT</span>
+        <span className="payment-preview-note">Payment preview &middot; no real charges</span>
       </header>
 
       {screen === "loading" && (
@@ -269,13 +269,13 @@ export default function ConsentPage() {
       {screen === "captured" && data && (
         <StatusScreen tone="funded" eyebrow="BOOKED TOGETHER" title="Paid. Booking confirmed." links={links}>
           <p className="status-lede"><strong className="money">{formatUsd(data.share_cents)}</strong>, your exact share of {data.purchase.title}, was captured after the signed checkout succeeded.</p>
-          <p className="fine">Simulated payment: no real money moves in this demo.</p>
+
         </StatusScreen>
       )}
       {screen === "refunded" && data && (
         <StatusScreen tone="funded" eyebrow="REFUNDED" title="Your share was refunded" links={links}>
           <p className="status-lede">The booking was cancelled and your share went back to your card.</p>
-          <p className="fine">Simulated payment: no real money moves in this demo.</p>
+
         </StatusScreen>
       )}
       {screen === "held" && data && <HeldSuccess data={data} last4={last4} links={links} onLeave={onLeave} />}
@@ -292,7 +292,7 @@ export default function ConsentPage() {
               </p>
               <ListingHero title={data.purchase.title} photoUrl={data.purchase.photo_url} />
               <h2 className="consent-listing-title">{data.purchase.title}</h2>
-              <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")} · Demo data</p>
+              <p className="muted">{[data.purchase.dates, data.purchase.merchant_name].filter(Boolean).join(" · ")}</p>
             </section>
             <section className="consent-promises" aria-label="What Tandem can and can never do">
               <CanCanNever can={data.can} canNever={data.can_never} />
@@ -338,7 +338,7 @@ export default function ConsentPage() {
                     )}
                   </div>
                 )}
-                <p className="fine center">{quickConfirm ? "Same card, same merchant. Only the amount changes." : "Confirm with Face ID / passkey. Leave anytime before booking."}</p>
+                <p className="fine center">{quickConfirm ? "Same card, same merchant. Only the amount changes." : "Review your approval. You can leave before the plan is finalized."}</p>
               </div>
             </section>
           </div>

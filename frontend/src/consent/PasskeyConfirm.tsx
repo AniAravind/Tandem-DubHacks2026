@@ -15,7 +15,7 @@ export default function PasskeyConfirm({
     >
       <label htmlFor={id}>Confirmation code</label>
       <p className="otp-help" id={`${id}-help`}>
-        Passkey wasn&apos;t available, so we sent a code instead. Simulated SMS: <strong className="money">{DEMO_OTP}</strong>
+        Use this preview confirmation code: <strong className="money">{DEMO_OTP}</strong>
       </p>
       <input
         id={id}

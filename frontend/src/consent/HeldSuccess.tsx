@@ -58,7 +58,7 @@ export default function HeldSuccess({
       ) : (
         <p className="fine">The group is fully funded, so your hold is locked in for booking.</p>
       )}
-      <p className="fine">Simulated payment: no real money moves in this demo.</p>
+
       {leaving && <LeaveSheet shareCents={data.share_cents} onLeave={onLeave} onClose={() => setLeaving(false)} />}
     </section>
   );

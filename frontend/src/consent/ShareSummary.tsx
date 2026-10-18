@@ -1,8 +1,7 @@
-import { formatUsd, offerCents } from "./money";
+import { formatUsd } from "./money";
 import type { ConsentPayload } from "./api";
 
 export default function ShareSummary({ data }: { data: ConsentPayload }) {
-  const offer = offerCents(data.offers, data.share_cents);
   const split = data.purchase.split_count;
   return (
     <section className="share-summary" aria-label="Your share">
@@ -12,11 +11,6 @@ export default function ShareSummary({ data }: { data: ConsentPayload }) {
       <div className="seat-bar" aria-hidden="true">
         {Array.from({ length: Math.min(split, 12) }, (_, i) => <span key={i} className={i === 0 ? "mine" : ""} />)}
       </div>
-      {offer > 0 && data.offers[0] && (
-        <p className="offer-chip">
-          <span aria-hidden="true">★</span> Card-linked offer: {formatUsd(offer)} back <span className="muted">(simulated)</span>
-        </p>
-      )}
       <p className="hold-note">A hold today. A charge only when everyone&apos;s in.</p>
     </section>
   );

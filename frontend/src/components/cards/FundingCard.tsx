@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { usd } from "../../api/client";
 import type { FundingCardData } from "../../types/contracts";
 import { countdown, when } from "../../chat/format";
-import { SimBadge, type CardProps } from "./common";
+import { type CardProps } from "./common";
 import { SHARE_STATUS } from "./status";
 
 export function FundingCard({ data, consentUrl, meId, onDemoShare }: CardProps<FundingCardData>) {
@@ -22,7 +22,7 @@ export function FundingCard({ data, consentUrl, meId, onDemoShare }: CardProps<F
     <article className="card funding-card" aria-label={`Funding for ${data.title}`}>
       <div className="card-row">
         <h3 className="card-title">{data.title} · <span className="money">{usd(data.total_cents)}</span></h3>
-        <SimBadge />
+
       </div>
       <div className="progress" role="progressbar" aria-valuenow={held} aria-valuemin={0} aria-valuemax={active.length}
            aria-label={`${held} of ${active.length} shares held`}>

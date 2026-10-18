@@ -92,7 +92,7 @@ class Orchestrator:
         from purchases import live
         session = PhotonSession.objects.filter(member__group=self.group).first()
         brief = session.planning_state if session and session.planning_state.get('goal') else {}
-        lines = ["No demo-catalog offer matched" + (f" {brief['goal']}." if brief else " that search.")]
+        lines = ["No catalog offer matched" + (f" {brief['goal']}." if brief else " that search.")]
         if live.configured():
             lines.append("Say “search the web” and I’ll pull real listings to compare.")
         missing = [m for m in missing_details(brief) if m != "budget per buyer"] if brief else []
@@ -444,7 +444,7 @@ class Orchestrator:
             from chat.models import PhotonSession
             if PhotonSession.objects.filter(member__group=self.group).exists():
                 found = next(data.get('options', []) for name, data in reversed(self.tool_results) if name == 'search_options')
-                text = ('🔎 Your shortlist\n\nA few picks to consider. Reply with a number or name and I’ll make your plan link.\n\nDemo offers · payments are simulated.' if found
+                text = ('🔎 Your shortlist\n\nA few picks to consider. Reply with a number or name and I’ll make your plan link.\n\nReview the plan before approving your share.' if found
                         else text if text and not self.private_reply_problem(text) else self.no_match_text())
         elif text and self.private_reply_problem(text):
             text = self.private_next_step()
@@ -481,7 +481,7 @@ class Orchestrator:
                 if plan:
                     featured = next((o for o in plan.details.get('live_offers') or [] if o['offer_id'] == plan.details.get('featured_offer_id')), None) or next((o for o in plan.details.get('live_offers') or [] if o['label'] == plan.details.get('featured_offer')), None)
                     if plan.selected_option_id:
-                        note = 'Each buyer approves their own payment on the website; payments are simulated.'
+                        note = 'Each person reviews their own share on the plan.'
                     elif featured:
                         note = (f"It features {featured['title']} from {featured['source']}. That’s a live web listing, "
                                 "so it’s for planning together: Tandem can’t take payment for it.")

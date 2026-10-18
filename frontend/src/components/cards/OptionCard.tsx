@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { usd } from "../../api/client";
 import type { OptionCardData } from "../../types/contracts";
-import { DemoTag, type CardProps } from "./common";
+import { CatalogTag, type CardProps } from "./common";
 
 const FEATURES: Record<string, string> = { hot_tub: "Hot tub", kitchen: "Kitchen", separate_beds: "Separate beds", parking: "Parking" };
 const label = (f: string) => FEATURES[f] ?? f.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -33,7 +33,7 @@ export function OptionCard({ data, onReply }: CardProps<OptionCardData>) {
         <span className="rank">{data.rank === 1 ? "Top pick" : `Option ${data.rank}`}</span>
       </div>
       <h3 className="card-title">{data.title}</h3>
-      <p className="option-merchant">{data.merchant_name} <DemoTag /></p>
+      <p className="option-merchant">{data.merchant_name} <CatalogTag /></p>
       <p className="per-person money">
         <strong>{usd(data.per_person_cents)}</strong> each <span className="muted">· {usd(data.total_cents)} total · up to {data.capacity}</span>
       </p>

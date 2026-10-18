@@ -363,3 +363,5 @@
   .sheet-card { border-radius: 18px; padding: 28px; }
   .status-screen { margin-top: 56px; padding: 36px 40px; }
 }
+
+.payment-preview-note{font-size:12px;color:var(--ink-600);text-align:right;line-height:1.5}

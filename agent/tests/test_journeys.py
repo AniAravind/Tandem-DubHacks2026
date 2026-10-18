@@ -228,5 +228,5 @@ class GiftCategoryJourneyTests(PrivateJourneyTests):
                         self.brief(goal="Telescope", category="telescope", group_size=1, budget_per_person=300),
                         self.search(category="telescope", group_size=1, budget_per_person_max=300), reply(""))
         text = out[-1].text_redacted
-        self.assertIn("No demo-catalog offer matched Telescope.", text)
+        self.assertIn("No catalog offer matched Telescope.", text)
         self.assertIn("Or tell me one or two must-haves", text)

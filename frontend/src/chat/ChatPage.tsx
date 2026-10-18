@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, setDemoMember, getDemoMember } from "../api/client";
-import { SimBadge } from "../components/cards/common";
+
 import { Composer } from "./Composer";
 import { DEMO_GROUP, resolveGroupId } from "./demo";
 import { MemberSwitcher } from "./MemberSwitcher";
@@ -112,7 +112,7 @@ export default function ChatPage() {
       <header className="chat-header">
         <div>
           <p className="eyebrow">THE GROUP CONVERSATION</p><h1>{group.name}</h1>
-          <p className="muted">{group.members.length} people · <SimBadge>SIMULATED PAYMENTS</SimBadge></p>
+          <p className="muted">{group.members.length} people</p>
         </div>
         {group.can_switch_member === false ? <span className="signed-in">Signed in as <strong>{me.display_name}</strong></span> : <MemberSwitcher members={group.members} meId={me.id} onChange={(m) => {
           // Each member sees different private messages, so reload the history as them.
