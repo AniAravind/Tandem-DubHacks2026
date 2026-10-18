@@ -71,3 +71,16 @@ class FactCaptureTests(TestCase):
             save(self.member,{**args,'requirements':['beachfront resort']},verified_facts=True,fact_seq=first.seq)
         self.assertEqual(caught.exception.code,'stale_fact_update')
         self.assertEqual(self.state()['requirements'],['mountain cabin'])
+
+    def test_unconfirmed_budget_does_not_discard_dates_and_preferences(self):
+        self.session.planning_state={}
+        self.session.save()
+        self.input('11/17-11/27. 1000. Hotel, whatever activities you think are right')
+        capture(self.group,self.actor,lambda *args:{'goal':'Trip','category':'travel','group_size':4,
+            'budget_total':4000,'requirements':['hotel'],
+            'decision_details':[{'topic':'dates','value':'2026-11-17 to 2026-11-27'}]})
+        state=self.state()
+        self.assertIsNone(state['budget_per_person_cents'])
+        self.assertEqual(state['requirements'],['hotel'])
+        self.assertEqual(state['decision_details'],[{'topic':'dates','value':'2026-11-17 to 2026-11-27'}])
+        self.assertIn('Is the budget per person or for everyone?',state['open_questions'])

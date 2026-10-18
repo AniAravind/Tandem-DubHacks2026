@@ -91,7 +91,17 @@ def capture(group,actor,reader):
         if problems:
             log.warning('Fact capture schema rejected: %s',problems[:3])
             return
-        save(session.member,args,verified_facts=True,fact_seq=latest.seq)
+        try:
+            save(session.member,args,verified_facts=True,fact_seq=latest.seq)
+        except Exception as exc:
+            from purchases.rules import RuleError
+            if not isinstance(exc,RuleError) or exc.code not in {'budget_not_confirmed','budget_mismatch'}:
+                raise
+            # An ambiguous budget must not discard unrelated dates/preferences.
+            args={key:value for key,value in args.items() if key not in {'budget_total','budget_per_person'}}
+            args['open_questions']=list(dict.fromkeys([*args.get('open_questions',[]),
+                'Is the budget per person or for everyone?']))
+            save(session.member,args,verified_facts=True,fact_seq=latest.seq)
         from core.events import log_event
         log_event('agent.facts_captured',actor=actor,group_id=group.pk,payload={'source_seq':latest.seq,'fields':sorted(args)})
     except Exception as exc:

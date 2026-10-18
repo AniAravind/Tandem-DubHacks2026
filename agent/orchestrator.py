@@ -78,6 +78,7 @@ class Orchestrator:
         self.provider_retry_after = None
         self.provider_invalid_tools = False
         self.discovery_error = None
+        self.last_tool_error = None
         self.succeeded: set[tuple[str, str]] = set()
 
     def no_match_text(self):
@@ -230,6 +231,8 @@ class Orchestrator:
             # Models sometimes repeat a finished step (save the brief, save it again...). Never re-run it.
             return self._reject(name, "duplicate_call", "That exact call already succeeded this turn. Reply to the user now.")
         result = self.engine.execute(name, args, actor)
+        if not result.get('ok'):
+            self.last_tool_error = result.get('error')
         if name == 'live_search' and not result.get('ok'):
             self.discovery_error = result.get('error')
         if result.get("ok"):
@@ -349,6 +352,7 @@ class Orchestrator:
             if short_link_request and self.publish_requested_proposal(reuse_published=True):
                 return self.compose(None)
         calls = repairs = 0
+        failures = {}
         original_text = text
         text = None
         while True:
@@ -393,6 +397,11 @@ class Orchestrator:
                     calls += 1
                     result = self.run_tool(tc.function.name, tc.function.arguments, actor)
                     ran_money_tool |= tc.function.name in MONEY_ADJACENT
+                    if not result.get('ok'):
+                        failure = (tc.function.name, result.get('error', {}).get('code'))
+                        failures[failure] = failures.get(failure, 0) + 1
+                        if failures[failure] >= 2:
+                            repairs = MAX_REPAIRS
                     if result.get("error", {}).get("code") in {"schema_invalid", "duplicate_call"}:
                         repairs += 1
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
@@ -544,8 +553,12 @@ class Orchestrator:
                     attached.append(AgentMessage(text=f'Here’s your plan for {plan.title}.\n\nAdd your name and number through your private link below, then invite the others from the page.\n\n'+note,
                         link=owner_url(plan), private_to_member_id=str(self.group.organizer_id)))
         out = [AgentMessage(text=text)] if text else []
-        if not out and not attached and any(name=='save_buying_brief' for name,data in self.tool_results):
-            out = [AgentMessage(text=self.private_next_step())]
+        if not out and not attached and PhotonSession.objects.filter(member__group=self.group).exists():
+            log.warning('Private turn produced no reply; using a visible recovery question')
+            error = self.last_tool_error or {}
+            recovery = ('I couldn’t confirm the budget from your saved messages. What’s the budget, and is it per person or for everyone?'
+                        if error.get('code') == 'budget_not_confirmed' else self.private_next_step())
+            out = [AgentMessage(text=recovery)]
         public = [m for m in attached if not m.private_to_member_id]
         if out and len(public) == 1:                                # a single card rides on the text message
             out[0].card = public[0].card
