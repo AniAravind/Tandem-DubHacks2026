@@ -4,10 +4,13 @@ Purchases API.
 M2 (real, reads the database): group, preferences, ballots, purchase, leave, ledger, events.
 Still a Phase 0 stub that returns the example JSON from purchases/fixtures.py: demo (M8).
 
-Who is calling? During the hackathon demo the caller sends the header  X-Tandem-Member: <member uuid>.
-That header is only trusted when DEMO_MODE=1. A member who is not an active member of the group gets a 403.
+Who is calling? Two ways, checked in this order:
+  1. A signed session cookie, handed out when someone opens their personal consent link (core/session.py).
+  2. The header  X-Tandem-Member: <member uuid>, trusted ONLY when DEMO_MODE=1.
+A member who is not an active member of the group gets a 403.
 """
 import functools
+import hmac
 import uuid
 
 from django.conf import settings
@@ -20,7 +23,8 @@ from rest_framework.response import Response
 
 from core.events import EventType, log_event
 from core.models import Group, Member
-from purchases import consensus, ledger as ledger_lib, rules, serializers as ser
+from core.session import member_id_from_request
+from purchases import consensus, demo, ledger as ledger_lib, rules, serializers as ser
 from purchases.models import Ballot, Purchase, Share, Vote
 
 MAX_BUDGET_CENTS = 1_000_000            # $10,000 sanity limit for a private budget
@@ -52,13 +56,18 @@ def api_errors(view):
 
 def current_member(request, group_id) -> Member:
     """Who is calling, and are they allowed to touch this group? 401 = we do not know you, 403 = not your group."""
-    if not settings.DEMO_MODE:
-        raise ApiError("auth_not_configured", "Sign-in is not available yet.", 401)
-    raw = request.headers.get("X-Tandem-Member", "")
+    member_id = member_id_from_request(request)
+    if member_id is None:
+        if not settings.DEMO_MODE:
+            raise ApiError("auth_not_configured", "Sign in with your personal link first.", 401)
+        try:
+            member_id = uuid.UUID(request.headers.get("X-Tandem-Member", ""))
+        except ValueError:
+            raise ApiError("unauthenticated", "Send a valid X-Tandem-Member header.", 401)
     try:
-        member = Member.objects.select_related("group").get(pk=uuid.UUID(raw))
-    except (ValueError, Member.DoesNotExist):
-        raise ApiError("unauthenticated", "Send a valid X-Tandem-Member header.", 401)
+        member = Member.objects.select_related("group").get(pk=member_id)
+    except Member.DoesNotExist:
+        raise ApiError("unauthenticated", "We do not know who you are. Open your personal link again.", 401)
     if member.group_id != group_id or member.status != Member.Status.ACTIVE:
         log_event(EventType.AUTH_DENIED, actor=f"member:{member.id}", group_id=member.group_id,
                   payload={"reason": "not_a_member", "wanted_group": str(group_id)})
@@ -209,5 +218,15 @@ def events(request, gid):
 
 
 @api_view(["POST"])
+@api_errors
 def demo_action(request, action):
-    return Response({"ok": True, "action": action, "stub": True, "simulated": True})
+    """Backstage buttons for the live demo. Locked unless DEMO_MODE=1 AND the X-Demo-Key header matches DEMO_ADMIN_KEY."""
+    key = request.headers.get("X-Demo-Key", "")
+    allowed = settings.DEMO_MODE and bool(settings.DEMO_ADMIN_KEY) and hmac.compare_digest(
+        key.encode(), settings.DEMO_ADMIN_KEY.encode())
+    if not allowed:
+        raise ApiError("forbidden", "Demo controls are locked.", 403)
+    try:
+        return Response({"ok": True, "action": action, "simulated": True, **demo.run(action, request.data or {})})
+    except demo.DemoError as e:
+        raise ApiError(e.code, e.message, e.status)
