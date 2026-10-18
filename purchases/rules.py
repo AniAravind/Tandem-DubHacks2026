@@ -21,6 +21,7 @@ import json
 import logging
 import uuid
 from datetime import date, timedelta, timezone as dt_timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -168,8 +169,14 @@ def _signed_send(client, purchase: Purchase, slug: str, action: str, body: dict,
             return status, data, audit
 
 
+# Rejections that are the merchant's temporary trouble (worth trying again later), not a real "no".
+TRANSIENT_REJECTIONS = ("merchant_error", "quote_failed")
+
+
 def _reject(purchase: Purchase, status: int, data: dict, why: str = "") -> dict:
     reason = (data.get("error") or {}).get("code") or why or "merchant_error"
+    if status >= 500:
+        reason = "merchant_error"                                    # a server error is always "try again later"
     log_event(EventType.MERCHANT_REJECTED, actor="merchant", group_id=purchase.group_id, purchase_id=purchase.id,
               payload={"reason": reason, "status": status})
     return {"status": "rejected", "reason": reason}                  # nothing was captured; holds stay in place
@@ -255,6 +262,8 @@ def _price_changed(purchase: Purchase, people: int, new_total: int) -> dict:
         choices=[{"key": "accept", "label": "Pay the new price"}, {"key": "cancel", "label": "Cancel the purchase"}])
     log_event(EventType.VOTE_OPENED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
               payload={"vote_id": str(vote.id), "purpose": "price_change"})
+    from purchases import tasks
+    tasks.schedule(tasks.close_vote, str(vote.id), eta=vote.closes_at)
     _post(purchase.group_id, AgentMessage(
         text=f"The price changed from {ser.money(purchase.total_cents)} to {ser.money(new_total)}. Nobody was charged.",
         card=Card("VoteCard", {"vote_id": str(vote.id), "closes_at": ser.iso(vote.closes_at), "quorum": vote.quorum, "voted": 0,
@@ -321,10 +330,14 @@ def check_funded(purchase_id) -> dict:
 
 
 def _run_checkout(purchase_id) -> None:
+    from purchases import tasks
     try:
-        checkout(purchase_id)
+        result = checkout(purchase_id)
     except Exception:                                     # noqa: BLE001  (logged; the purchase stays funded)
         log.exception("checkout failed for purchase %s", purchase_id)
+        result = {"status": "rejected", "reason": "merchant_error"}
+    if result.get("status") == "rejected" and result.get("reason") in TRANSIENT_REJECTIONS:
+        tasks.schedule(tasks.retry_checkout, str(purchase_id), 2, countdown=tasks.retry_delay(1))
 
 
 # --------------------------------------------------------------------------------------
@@ -561,6 +574,8 @@ def apply_fallback(vote_id) -> dict:
         if kind == "replacement":
             purchase.deadline_at = purchase.deadline_at + fallbacks.REPLACEMENT_EXTENSION
             purchase.save(update_fields=["deadline_at", "updated_at"])
+            from purchases import tasks
+            tasks.schedule_purchase_jobs(purchase, _active_shares(purchase))      # new deadline, new reminders
             log_event(EventType.FALLBACK_APPLIED, actor="rules", group_id=purchase.group_id, purchase_id=purchase.id,
                       payload={"vote_id": str(vote.id), "kind": kind, "deadline_at": ser.iso(purchase.deadline_at)})
             summary = {"status": "applied", "kind": kind, "deadline_at": ser.iso(purchase.deadline_at)}
@@ -724,22 +739,36 @@ def consent_link(share: Share) -> str:
     return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/c/{consent_token(share)}"
 
 
+def _when(dt, tz: str) -> str:
+    """'Tue 6:00 PM' in the group's own timezone."""
+    return dt.astimezone(ZoneInfo(tz)).strftime("%a %-I:%M %p")
+
+
+def _send_private(group_id, member_id, text: str, link: str | None = None) -> bool:
+    """A message only ONE member can see (consent links, reminders). Never raises: chat must not break money logic."""
+    try:
+        from chat.services import post_card
+        post_card(str(group_id), AgentMessage(text=text, link=link, private_to_member_id=str(member_id)))
+        return True
+    except Exception:                                                            # noqa: BLE001
+        log.exception("could not send a private message to member %s", member_id)
+        return False
+
+
 def _send_consent_links(shares: list) -> int:
     """
-    Hand each member their private link. Consent links are secrets (whoever holds one can act as that member),
-    so they are NEVER posted in the group chat or returned to the AI. Delivery needs a private-message sender
-    from the chat side (chat.services.send_private, Aryan). Until that exists, nothing is sent and we return 0.
+    Hand each member their private link. Consent links are secrets (whoever holds one can act as that member), so
+    they go only to that member as a private message. They are NEVER posted in the group chat or returned to the AI.
+    Returns how many were delivered.
     """
-    try:
-        from chat.services import send_private
-    except ImportError:
-        log.warning("chat.services.send_private is missing; %d consent links were created but not delivered", len(shares))
-        return 0
+    sent = 0
     for share in shares:
-        send_private(str(share.purchase.group_id), str(share.member_id),
-                     AgentMessage(text="Your private link to approve your share (simulated payments).",
-                                  link=consent_link(share), private_to_member_id=str(share.member_id)))
-    return len(shares)
+        purchase = share.purchase
+        text = (f"Your share for {purchase.option.title}: {ser.money(share.amount_cents)}. "
+                f"Hold it by {_when(purchase.deadline_at, purchase.group.timezone)}. "
+                "It's a hold, not a charge, and you can say no on the page. (Payments are simulated.)")
+        sent += _send_private(purchase.group_id, share.member_id, text, consent_link(share))
+    return sent
 
 
 class RulesEngine:
@@ -847,6 +876,8 @@ class RulesEngine:
             choices=[{"key": str(i), "option_id": str(o.id), "label": o.title} for i, o in enumerate(options, start=1)])
         log_event(EventType.VOTE_OPENED, actor=f"member:{member.id}", group_id=member.group_id,
                   payload={"vote_id": str(vote.id), "choices": len(options)})
+        from purchases import tasks
+        tasks.schedule(tasks.close_vote, str(vote.id), eta=vote.closes_at)
         return {"vote_id": str(vote.id), "closes_at": ser.iso(vote.closes_at), "quorum": vote.quorum,
                 "choices": [{"key": c["key"], "label": c["label"]} for c in vote.choices]}
 
@@ -892,6 +923,8 @@ class RulesEngine:
         transition_purchase(purchase.id, P.VOTING, actor="rules", reason="vote_won")
         transition_purchase(purchase.id, P.COLLECTING, actor="rules", reason="shares_created")
         sent = _send_consent_links(shares)
+        from purchases import tasks
+        tasks.schedule_purchase_jobs(purchase, shares)
         return {"purchase_id": str(purchase.id), "deadline_at": ser.iso(purchase.deadline_at),
                 "shares_created": len(shares), "consent_links_sent": sent}
 

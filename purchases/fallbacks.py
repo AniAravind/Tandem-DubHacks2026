@@ -115,4 +115,6 @@ def propose(purchase: Purchase, reason: str, actor: str) -> dict:
     log_event(EventType.FALLBACK_PROPOSED, actor=actor, group_id=purchase.group_id, purchase_id=purchase.id,
               payload={"vote_id": str(vote.id), "reason": reason, "options": [o["option_id"] for o in options],
                        "staying": len(remaining)})
+    from purchases import tasks                                      # imported here to avoid a circular import
+    tasks.schedule(tasks.close_vote, str(vote.id), eta=vote.closes_at)
     return _response(purchase, vote, len(remaining))

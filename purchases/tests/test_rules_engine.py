@@ -304,10 +304,12 @@ class CreatePurchaseTests(EngineBase):
         opened = read_consent_token(link.split("/c/")[1], header_member_id=str(share.member_id))
         self.assertEqual(opened["share"].id, share.id)
         self.assertEqual(opened["payload"]["member_id"], str(share.member_id))
-        # links are never returned to the AI and never posted in the group chat
+        # links are never returned to the AI, and the only chat messages holding one are PRIVATE (they name one member)
         self.assertNotIn("/c/", json.dumps(self.run_tool("check_status", {})))
         from chat.models import ChatMessage
-        self.assertFalse(ChatMessage.objects.filter(text_redacted__contains="/c/").exists())
+        with_links = ChatMessage.objects.filter(text_redacted__contains="/c/")
+        self.assertEqual(with_links.count(), len(purchase.shares.all()))             # one private message per member
+        self.assertFalse(with_links.filter(member__isnull=True).exists())            # none went to the whole group
 
 
 class StatusAndOptionsApiTests(EngineBase):
