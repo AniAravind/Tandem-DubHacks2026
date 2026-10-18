@@ -48,6 +48,16 @@ def missing_details(brief: dict) -> list[str]:
     return missing
 
 
+def trip_member_ids(group: Group) -> list[str]:
+    """Who is actually on the latest booked trip (dropouts excluded). Empty until something is funded or booked."""
+    purchase = (Purchase.objects.filter(group=group, state__in=("funded", "booked", "completed"))
+                .order_by("-created_at").first())
+    if purchase is None:
+        return []
+    return [str(i) for i in purchase.shares.filter(superseded_by__isnull=True, status__in=("held", "captured"))
+            .values_list("member_id", flat=True)]
+
+
 def build_group_state(group: Group, engine=None, event: dict | None = None) -> dict:
     members = list(group.members.filter(status="active").order_by("created_at", "display_name"))
     wants = Counter(f for m in members for f in (m.prefs or {}).get("must_haves", []))
@@ -89,6 +99,9 @@ def build_group_state(group: Group, engine=None, event: dict | None = None) -> d
         statuses = Counter(purchase.shares.filter(superseded_by__isnull=True).values_list("status", flat=True))
         state["purchase"] = {"id": str(purchase.id), "title": purchase.option.title, "state": purchase.state,
                              "deadline_at": purchase.deadline_at.isoformat(), "counts": dict(statuses)}
+    trip = trip_member_ids(group)
+    if trip:
+        state["trip_member_ids"] = trip                  # "split with everyone" after booking means these people
     vote = Vote.objects.filter(group=group, status="open").order_by("-created_at").first()
     if vote:
         state["open_vote"] = {"id": str(vote.id), "purpose": vote.purpose, "closes_at": vote.closes_at.isoformat(),

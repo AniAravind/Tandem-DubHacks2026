@@ -75,7 +75,10 @@ def expense(orch, actor, match):
     member_id = actor.split(":", 1)[1]
     amount = float(match.group(1))
     item = match.group(2).strip().capitalize() or "Shared expense"
-    got = _turn(orch, actor, [("add_expense", {"amount": amount, "payer_id": member_id, "description": item, "split": {"mode": "equal"}})])
+    from agent.context import trip_member_ids
+    trip = trip_member_ids(orch.group)
+    split = {"mode": "equal", **({"member_ids": trip} if member_id in trip else {})}   # dropouts don't share trip costs
+    got = _turn(orch, actor, [("add_expense", {"amount": amount, "payer_id": member_id, "description": item, "split": split})])
     if not got:
         return None
     d = got["add_expense"]

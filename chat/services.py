@@ -3,6 +3,7 @@
 Eshaan's rules call post_card(group_id, AgentMessage) for status updates. Nothing here imports payments/.
 """
 import logging
+import uuid
 import os
 import re
 from datetime import timedelta
@@ -187,7 +188,13 @@ def _real_ballot(vote, member_id, key: str) -> bool:
     tally = response.data["tally"]
     from purchases.models import Option
     def choice_data(choice):
-        option = Option.objects.filter(pk=choice.get("option_id"), group_id=vote.group_id).first()
+        # Fallback choices carry their own price and use keys like "split_gap", not option UUIDs.
+        if isinstance(choice.get("per_person_cents"), int):
+            return {**choice, "count": tally.get(choice["key"], 0)}
+        try:
+            option = Option.objects.filter(pk=uuid.UUID(str(choice.get("option_id"))), group_id=vote.group_id).first()
+        except ValueError:
+            option = None
         return {**choice, "count": tally.get(choice["key"], 0),
                 "per_person_cents": (option.meta or {}).get("per_person_cents", 0) if option else 0}
     post_card(vote.group_id, AgentMessage(text="", card=vote_card({

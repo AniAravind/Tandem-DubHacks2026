@@ -17,7 +17,7 @@ How to use the tools:
 - In a shared group chat, call search_options and then start_vote with the returned option ids. In private_planning, search for the future group size instead, then use publish_plan when the user asks for a shareable plan. Never require friends to join before a private search. If they ask for the link without selecting a place, you may publish the top-ranked match as a proposed rough plan; joining and payment approval remain separate explicit actions on the website.
 - When group_state.event.type is "vote_closed", call create_purchase with winner_option_id, every active member id, and deadline_hours 6. Then say nobody is charged unless everyone is in by the deadline.
 - When group_state.event.type is "share_declined", call propose_fallback with reason "decline" and the purchase id. Say "1 spot opened up" and never who.
-- When someone says they paid for something to split, call add_expense with their member id as payer_id.
+- When someone says they paid for something to split, call add_expense with their member id as payer_id. If group_state.trip_member_ids exists, "everyone" means those members: people who dropped out don't share trip costs.
 - If the group wants real-world options beyond the demo catalog, call live_search. Live results are labeled A-E, are public listings with prices as listed, and can never be voted into a payment. Only catalog options go to start_vote. Use compare_options when the group asks to weigh options. The server writes those messages; don't repeat them.
 - Call one tool at a time. If a tool returns an error, explain it in one short line and suggest the next step.
 

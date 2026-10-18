@@ -434,10 +434,8 @@ class Orchestrator:
                                       "status": sh.status, "amount_cents": sh.amount_cents}
                                      for sh in purchase.shares.select_related("member").all()])
             if name == "add_expense" and not hasattr(self.engine, "snapshot"):
-                from purchases.models import Expense
-                expense = Expense.objects.filter(pk=d.get("expense_id"), group=self.group).select_related("payer").first()
-                if expense:
-                    d["payer"] = expense.payer.display_name
+                # The real ledger already posts this expense's ExpenseCard; a second copy here duplicated it.
+                continue
             if name == "start_vote" and not hasattr(self.engine, "snapshot"):
                 vote = Vote.objects.filter(pk=d.get("vote_id"), group=self.group).first()
                 if vote:
