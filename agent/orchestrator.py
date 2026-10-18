@@ -6,9 +6,10 @@ import json
 import logging
 import os
 import pathlib
+import time
 
 from django.conf import settings
-from openai import BadRequestError
+from openai import BadRequestError, RateLimitError
 
 from agent import cards, demo_script, safety
 from agent.context import build_messages
@@ -106,9 +107,23 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ LLM loop
     def _call(self, messages: list[dict], **kw):
+        from chat.models import PhotonSession
+        tools = TOOLS
+        if PhotonSession.objects.filter(member__group=self.group).exists():
+            tools = [tool for tool in TOOLS if tool['function']['name'] in {'search_options', 'publish_plan'}]
         for attempt in range(2):                                    # one retry on timeout / API error
             try:
-                return self.llm_chat(messages, TOOLS, **kw)
+                return self.llm_chat(messages, tools, **kw)
+            except RateLimitError as exc:
+                log.warning('AI provider rate limit (attempt %s)', attempt + 1)
+                if attempt == 0:
+                    try:
+                        delay = float(exc.response.headers.get('retry-after', '2'))
+                    except (TypeError, ValueError):
+                        delay = 2
+                    if not 0 <= delay <= 15:
+                        return None
+                    time.sleep(max(1, delay) + 0.1)
             except BadRequestError as exc:
                 if exc.code == "tool_use_failed":
                     # Provider validation occurs before a tool reaches our loop.
@@ -143,6 +158,12 @@ class Orchestrator:
             force_text = calls >= MAX_TOOL_CALLS or repairs >= MAX_REPAIRS
             resp = self._call(messages, **({"tool_choice": "none"} if force_text else {}))
             if resp is None:
+                if self.tool_results:
+                    # State changes already happened. Deliver their real cards
+                    # and private plan links even if narration is unavailable.
+                    completed = self.compose(None)
+                    if completed:
+                        return completed
                 if settings.DEMO_MODE and not self.tool_results:     # Grok unreachable: the demo script is the backup
                     scripted = self.run_scripted(actor, event, original_text)
                     if scripted:
