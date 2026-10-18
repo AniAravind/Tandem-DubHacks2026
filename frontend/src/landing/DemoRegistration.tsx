@@ -89,7 +89,10 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
   useEffect(() => {
     if (!messagesUrl || iphone || android) return;
     let cancelled = false;
-    void QRCode.toDataURL(messagesUrl, { width: 240, margin: 2, errorCorrectionLevel: "M" })
+    void QRCode.toDataURL(messagesUrl, {
+      width: 232, margin: 4, errorCorrectionLevel: "M",
+      color: { dark: "#141924", light: "#e9edf4" },
+    })
       .then(value => { if (!cancelled) setQr(value); }).catch(() => { if (!cancelled) setQr(""); });
     return () => { cancelled = true; };
   }, [messagesUrl, iphone, android]);
@@ -161,8 +164,9 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
           <small className="demo-note">Send from the number you registered. Opening Messages doesn’t send anything.</small>
           </div>
           {!iphone && <aside className="demo-qr-panel" aria-label="Open tandem in Messages">
-            {qr && <img className="demo-qr" src={qr} width="220" height="220" alt="Scan with your iPhone camera to open Messages addressed to tandem" />}
-            <p className="demo-scan">Scan to open Messages.<br />Send a text to start.</p>
+            <span className="demo-qr-label">Open in iMessage</span>
+            {qr && <img className="demo-qr" src={qr} width="156" height="156" alt="Scan with your iPhone camera to open Messages addressed to tandem" />}
+            <p className="demo-scan">Scan with your iPhone camera.</p>
           </aside>}
         </div>}
         {!ready && !failed && !error && !waitingLong && <button className="btn primary demo-primary" disabled>Connecting…</button>}
