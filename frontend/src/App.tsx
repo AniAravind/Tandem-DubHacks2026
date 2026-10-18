@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import LandingPage from "./landing/LandingPage";
 import ConsentPage from "./consent/ConsentPage";
 import "./styles/tokens.css";
 import Chat from "./chat/ChatPage";
@@ -10,7 +11,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/g/demo" replace />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/chat/:groupId" element={<Chat />} />
         <Route path="/c/:token" element={<ConsentPage />} />
         <Route path="/p/:planId" element={<PlanPage />} />
