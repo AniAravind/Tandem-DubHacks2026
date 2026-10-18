@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import time
 
 from django.conf import settings
@@ -31,6 +32,7 @@ MAX_TOOL_CALLS = 4
 MAX_REPAIRS = 2
 MONEY_ADJACENT = {"create_purchase", "propose_fallback", "add_expense"}
 FAILURE_TEXT = "I'm having trouble thinking right now. Your holds and votes are safe. Try again in a moment."
+_LINK_CLAIM = re.compile(r"(?:here[’']?s|here is|(?:i(?:[’']ve| have)?|we(?:[’']ve| have)?) (?:sent|created|generated))[^.!?\n]{0,100}\b(?:link|invite)\b|\b(?:link|invite)\b[^.!?\n]{0,50}\b(?:ready|sent|created|generated)\b", re.I)
 
 
 def get_engine(group_id=None):
@@ -64,6 +66,17 @@ class Orchestrator:
             from agent.llm import chat as llm_chat
         self.llm_chat = llm_chat
         self.tool_results: list[tuple[str, dict]] = []     # successful (tool, data) this turn, for cards + output filter
+
+    def private_reply_problem(self, text):
+        from chat.models import PhotonSession
+        if not PhotonSession.objects.filter(member__group=self.group).exists():
+            return None
+        if (_LINK_CLAIM.search(text) or re.search(r'https?://\S+/p/', text)) and not any(name == 'publish_plan' for name, data in self.tool_results):
+            return 'No plan link has been created. Search actual options if needed, then call publish_plan. Never claim a link exists without successful publication.'
+        if (re.search(r'search', text, re.I) and re.search(r'only you|only (?:one|1)|(?:one|1)[ -]?(?:active )?member', text, re.I)
+                and re.search(r'can[’\']?t|cannot|add (?:more|the other)', text, re.I)):
+            return 'One private member is expected. Search for the user’s intended group size now; joining happens on the website after publication.'
+        return None
 
     # ------------------------------------------------------------------ id ownership (R1, re-checked by the engine)
     def _foreign_ids(self, tool: str, args: dict) -> list[str]:
@@ -172,6 +185,14 @@ class Orchestrator:
             msg = resp.choices[0].message
             if not msg.tool_calls or force_text:
                 text = (msg.content or "").strip()
+                problem = self.private_reply_problem(text)
+                if problem:
+                    if repairs < MAX_REPAIRS and not force_text:
+                        repairs += 1
+                        messages.append({'role':'assistant','content':text})
+                        messages.append({'role':'system','content':problem})
+                        continue
+                    text = "I haven’t created a link yet. Tell me the trip destination, dates, group size, and rough budget; I can plan for everyone here before they join."
                 break
             messages.append({"role": "assistant", "content": msg.content or "",
                              "tool_calls": [{"id": tc.id, "type": "function",
@@ -205,6 +226,12 @@ class Orchestrator:
         return out
 
     def compose(self, text: str | None) -> list[AgentMessage]:
+        if any(name == 'publish_plan' for name, data in self.tool_results):
+            # Sharing instructions and organizer credentials belong to the
+            # server-generated private attachment, never model narration.
+            text = None
+        elif text and self.private_reply_problem(text):
+            text = "I haven’t created a link yet. I need to search and publish the proposed plan first."
         text = self.safe(text) if text else text
         labels = {o["id"]: o["title"] for name, d in self.tool_results if name == "search_options" for o in d.get("options", [])}
         presentation = []

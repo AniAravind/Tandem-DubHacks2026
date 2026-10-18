@@ -235,7 +235,7 @@
     "type": "function",
     "function": {
       "name": "publish_plan",
-      "description": "After the private organizer chooses a searched option, publish a separate shared website trip plan. No payments or fabricated members are created. The server attaches a private organizer link.",
+      "description": "Publish a separate shared website trip plan using a searched option. Use the organizer’s chosen option, or the top-ranked match when they request a proposed rough-plan link. No payments or fabricated members are created. The server attaches a private organizer link.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
