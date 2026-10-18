@@ -787,7 +787,9 @@ class RulesEngine:
             "publish_plan": self._publish_plan,
             "search_options": self._search_options, "start_vote": self._start_vote,
             "create_purchase": self._create_purchase, "check_status": self._check_status,
-            "propose_fallback": self._propose_fallback, "add_expense": self._add_expense}
+            "propose_fallback": self._propose_fallback, "add_expense": self._add_expense,
+            "live_search": self._live_search, "compare_options": self._compare_options,
+            "remember_preference": self._remember_preference}
 
     def execute(self, tool: str, args: dict, actor: str) -> dict:
         group_id = None
@@ -849,6 +851,7 @@ class RulesEngine:
         from chat.models import PhotonSession
         session = PhotonSession.objects.filter(member=member).first()
         brief = session.planning_state if session else {}
+        args = {**args, "category": consensus.canonical_category(args["category"])}
         ranked = consensus.rank_options(
             members, args["category"], args["group_size"], extra_must_haves=args.get("must_haves", []),
             budget_per_person_max_cents=round(budget_max * 100) if budget_max is not None else None)
@@ -962,7 +965,30 @@ class RulesEngine:
 
     def _publish_buying_plan(self, member, args):
         from purchases.briefs import publish
-        return publish(member)
+        return publish(member, args.get("featured_offer"))
+
+    def _live_search(self, member, args):
+        from purchases import live
+        from chat.models import PhotonSession
+        session = PhotonSession.objects.filter(member=member).first()
+        try:
+            return live.search(member, args, session.planning_state if session else None)
+        except live.LiveSearchError as e:
+            raise RuleError(e.code, e.message)
+
+    def _compare_options(self, member, args):
+        from purchases import compare
+        try:
+            return compare.compare(member, args)
+        except compare.CompareError as e:
+            raise RuleError(e.code, e.message)
+
+    def _remember_preference(self, member, args):
+        from purchases import compare
+        try:
+            return compare.remember(member, args)
+        except compare.CompareError as e:
+            raise RuleError(e.code, e.message)
 
     def _check_status(self, member: Member, args: dict) -> dict:
         if "purchase_id" in args:

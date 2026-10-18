@@ -130,3 +130,21 @@ class Refund(TimeStamped):
     amount_cents = models.BigIntegerField()
     gateway_refund_id = models.CharField(max_length=64)
     status = models.CharField(max_length=16, default="refunded")
+
+
+class LiveOffer(TimeStamped):
+    """A public web search result. Never a quote: it cannot be voted on, held, or checked out."""
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="live_offers")
+    search_id = models.CharField(max_length=32, db_index=True)
+    brief_revision = models.CharField(max_length=32, blank=True)
+    label = models.CharField(max_length=1)                     # "A".."E", distinct from catalog option numbers
+    kind = models.CharField(max_length=16)                     # stay | product | gift | flight | activity | other
+    query = models.CharField(max_length=200)
+    title = models.CharField(max_length=160)
+    url = models.URLField(max_length=500)
+    source = models.CharField(max_length=120)                  # domain the result came from
+    snippet = models.CharField(max_length=320, blank=True)
+    price_cents = models.BigIntegerField(null=True, blank=True)    # only when the amount appears verbatim in the source text
+    price_unit = models.CharField(max_length=12, blank=True)       # night | person | each | listed
+    price_text = models.CharField(max_length=60, blank=True)       # the exact matched source text, e.g. "$295/night"
+    est_per_person_cents = models.BigIntegerField(null=True, blank=True)

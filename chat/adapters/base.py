@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 CardType = Literal["PlanSummary", "PreferenceRequest", "OptionCard", "CompareCard", "VoteCard", "FundingCard",
-                   "FallbackCard", "BookingConfirmed", "ExpenseCard", "LedgerCard", "ErrorCard"]
+                   "FallbackCard", "BookingConfirmed", "ExpenseCard", "LedgerCard", "ErrorCard", "LiveOffersCard"]
 
 
 @dataclass

@@ -102,6 +102,67 @@ def consent_links(d: dict, tz: str) -> list[AgentMessage]:
     return out
 
 
+UNIT_SUFFIX = {"night": "/night", "person": " per person", "each": " each"}
+
+
+def live_offers_card(d: dict) -> Card:
+    """Shape documented in docs/live-offer-contract.md (LiveOffersCard)."""
+    return Card("LiveOffersCard", {"search_id": d["search_id"], "query": d["query"], "offers": d["offers"],
+                                   "disclaimer": d["disclaimer"], "live": True, "checkout_ready": False})
+
+
+def _listed(o: dict) -> str:
+    if o.get("price_cents") is None:
+        return "price not listed"
+    return usd(o["price_cents"]) + UNIT_SUFFIX.get(o.get("price_unit") or "", "") + " listed"
+
+
+def live_offers_text(d: dict) -> str:
+    if not d.get("offers"):
+        return ("🌐 I searched the web but didn’t find listings worth sharing for that. "
+                "Try a more specific place, item, or date range.")
+    lines = ["🌐 Live picks from the web", ""]
+    for o in d["offers"]:
+        estimate = f" · about {usd(o['est_per_person_cents'])} each" if o.get("est_per_person_cents") is not None else ""
+        fit = " · fits your budget" if o.get("fits_budget") else ""
+        lines += [f"{o['label']}. {o['title']}", f"{_listed(o)} on {o['source']}{estimate}{fit}", o["url"], ""]
+    lines.append("Real listings, not Tandem quotes: prices can change and checkout isn’t available for these. "
+                 "Reply with a letter to put one on your planning page, or say “compare A and B”.")
+    return "\n".join(lines)
+
+
+def compare_card(d: dict) -> Card:
+    return Card("CompareCard", {"rows": d["rows"], "cheapest_ref": d.get("cheapest_ref"),
+                                "budget_per_person_cents": d.get("budget_per_person_cents"), "note": d.get("note", "")})
+
+
+def compare_text(d: dict) -> str:
+    lines = ["⚖️ Side by side", ""]
+    for r in d["rows"]:
+        bits = [f"{r['ref']}. {r['title']}"]
+        if r["kind"] == "catalog":
+            bits.append(f"{usd(r['per_person_cents'])} each · {usd(r['total_cents'])} total")
+            if r.get("features"):
+                bits.append(", ".join(FEATURE_LABELS.get(f, f.replace('_', ' ')) for f in r["features"][:3]))
+            if r.get("cancellation"):
+                bits.append(r["cancellation"])
+            bits.append("demo offer, can be paid in Tandem")
+        else:
+            bits.append(f"{r['price_text']} listed" if r.get("price_text") else "price not listed")
+            if r.get("per_person_cents") is not None:
+                bits.append(f"about {usd(r['per_person_cents'])} each")
+            bits.append(f"{r['source']}, web only")
+        lines.append(" · ".join(bits))
+    lines.append("")
+    if d.get("cheapest_ref"):
+        lines.append(f"Lowest per person: {d['cheapest_ref']}.")
+    fits = [r["ref"] for r in d["rows"] if r.get("fits_budget")]
+    if d.get("budget_per_person_cents") is not None:
+        lines.append(f"Within your {usd(d['budget_per_person_cents'])} budget: " + (", ".join(fits) if fits else "none of these") + ".")
+    lines.append("Reply with a number or letter to choose.")
+    return "\n".join(lines)
+
+
 def cards_for(tool: str, data: dict, labels: dict, tz: str) -> list[AgentMessage]:
     """Card messages (text empty) plus private links for one successful tool result."""
     if tool == "search_options":
@@ -114,6 +175,10 @@ def cards_for(tool: str, data: dict, labels: dict, tz: str) -> list[AgentMessage
         return [AgentMessage(text="", card=fallback_card(data))]
     if tool == "add_expense":
         return [AgentMessage(text="", card=expense_card(data))]
+    if tool == "live_search" and data.get("offers"):
+        return [AgentMessage(text="", card=live_offers_card(data))]
+    if tool == "compare_options":
+        return [AgentMessage(text="", card=compare_card(data))]
     if tool == "check_status" and data.get("shares"):
         return [AgentMessage(text="", card=funding_card(data))]
     return []

@@ -49,7 +49,8 @@ def save(member, args):
     recommendations = args.get('recommendations', [])
     if any(amounts_in(item) or 'http' in item.lower() for item in recommendations):
         raise RuleError('unverified_offer', 'General recommendations must be qualitative. Only catalog tools can supply prices or merchant offers.')
-    state = {'goal':redact(args['goal']), 'category':args['category'], 'group_size':args['group_size'],
+    from purchases.consensus import canonical_category
+    state = {'goal':redact(args['goal']), 'category':canonical_category(args['category']), 'group_size':args['group_size'],
              'budget_per_person_cents':round(budget * 100) if budget is not None else None,
              'summary':redact(args.get('summary', '')), 'requirements':[redact(v) for v in args.get('requirements', [])],
              'recommendations':[redact(v) for v in recommendations]}
@@ -65,7 +66,7 @@ def save(member, args):
 
 
 @transaction.atomic
-def publish(member):
+def publish(member, featured_offer=None):
     from purchases.rules import RuleError
     from purchases.plans import plan_url
     Group.objects.select_for_update().get(pk=member.group_id)
@@ -73,11 +74,22 @@ def publish(member):
     state = session.planning_state if session else {}
     if not state:
         raise RuleError('requirements_needed', 'Save the buying goal and buyer count first.')
+    from purchases import live
+    offers = live.latest(member.group, state['revision'])
+    if featured_offer and featured_offer not in {o.label for o in offers}:
+        raise RuleError('not_found', 'That web result is not in the current search for this goal.')
+    details = {**state, 'live_offers': [live.offer_json(o) for o in offers],
+               'featured_offer': featured_offer or None, 'live_disclaimer': live.DISCLAIMER if offers else None}
     plan = TripPlan.objects.filter(source_group=member.group, details__revision=state['revision']).first()
     if plan is None:
         group = Group.objects.create(name=state['goal'][:120], channel='web', timezone=member.group.timezone)
         plan = TripPlan.objects.create(source_group=member.group, group=group, title=state['goal'][:120],
-            summary=state['summary'] or state['goal'], expected_members=state['group_size'], details=state)
+            summary=state['summary'] or state['goal'], expected_members=state['group_size'], details=details)
+    elif not plan.selected_option_id:
+        # Republishing keeps the same link but shows the newest web results and the latest featured choice.
+        plan.details = {**details, 'featured_offer': featured_offer or plan.details.get('featured_offer')}
+        plan.save(update_fields=['details', 'updated_at'])
     return {'plan_id':str(plan.id), 'title':plan.title, 'expected_members':plan.expected_members,
             'share_url':plan_url(plan), 'checkout_ready':bool(plan.selected_option_id), 'status':'quoted' if plan.selected_option_id else 'planning_only',
-            'budget_per_person_cents':state.get('budget_per_person_cents')}
+            'budget_per_person_cents':state.get('budget_per_person_cents'), 'featured_offer':plan.details.get('featured_offer'),
+            'live_offer_count':len(plan.details.get('live_offers') or [])}

@@ -35,3 +35,11 @@ test('signed URL characters are never modified by formatting', () => {
   const url='https://example.com/p/id?owner=ab__cd__ef&x=1';
   assert.equal(renderMessage({text:`✨ Your plan\n${url}`}),`✨ Your plan\n${url}`);
 });
+
+test('live web results and comparisons render once, with their links intact', () => {
+  const text = 'A. Blue Bear Cabin\n$335/night listed on vrbo.com\nhttps://www.vrbo.com/2023227312345678ha';
+  const live = renderMessage({ text, card: { type: 'LiveOffersCard', data: { offers: [{ label: 'A', title: 'Blue Bear Cabin' }], live: true } } });
+  assert.equal(live, text);
+  const compare = renderMessage({ text: '⚖️ Side by side\n\n1. Pinecrest', card: { type: 'CompareCard', data: { rows: [{ ref: '1' }] } } });
+  assert.equal(compare, '⚖️ Side by side\n\n1. Pinecrest');
+});

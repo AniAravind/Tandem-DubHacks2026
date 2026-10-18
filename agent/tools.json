@@ -230,7 +230,7 @@
     "type": "function",
     "function": {
       "name": "publish_plan",
-      "description": "Publish a separate shared website trip plan using a searched option. Use the organizer\u2019s chosen option, or the top-ranked match when they request a proposed rough-plan link. No payments or fabricated members are created. The server attaches a private organizer link.",
+      "description": "Publish a separate shared website trip plan using a searched option. Use the organizer’s chosen option, or the top-ranked match when they request a proposed rough-plan link. No payments or fabricated members are created. The server attaches a private organizer link.",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -325,7 +325,148 @@
       "parameters": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+          "featured_offer": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E"
+            ],
+            "description": "Letter of a current live web result the user chose to feature. It stays planning-only: no checkout."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "live_search",
+      "description": "Search the live web for real listings, products, flights or activities when the demo catalog has nothing suitable or the user asks for real options. Results are public links with prices as listed, NOT quotes: they cannot be paid for in Tandem. Use specific queries.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "kind",
+          "group_size"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 160,
+            "description": "Specific search, e.g. 'South Lake Tahoe cabin rental hot tub'."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "stay",
+              "product",
+              "gift",
+              "flight",
+              "activity",
+              "other"
+            ]
+          },
+          "location": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "group_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "budget_per_person_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5000,
+            "description": "USD dollars, not cents. A filter, not a spending authorization."
+          },
+          "dates": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "start": {
+                "type": "string",
+                "maxLength": 10
+              },
+              "end": {
+                "type": "string",
+                "maxLength": 10
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "compare_options",
+      "description": "Side-by-side comparison of current catalog options (by id) and/or live web results (by letter). The server writes the comparison; do not restate it.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "option_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4
+          },
+          "offer_labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E"
+              ]
+            },
+            "maxItems": 5
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "remember_preference",
+      "description": "Save durable preferences the user explicitly confirmed (e.g. 'vegetarian', 'prefers cabins with a hot tub', 'flies from SEA'). Not budgets, cards, phone numbers or one-off details. Use forget to remove one the user retracts.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "remember": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 80
+            },
+            "maxItems": 5
+          },
+          "forget": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 80
+            },
+            "maxItems": 5
+          }
+        }
       }
     }
   }
