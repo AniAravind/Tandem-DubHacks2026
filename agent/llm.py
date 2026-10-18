@@ -1,6 +1,7 @@
 import logging
 import hashlib
 import os
+import re
 import time
 
 from openai import OpenAI, RateLimitError, BadRequestError
@@ -86,6 +87,12 @@ def chat(messages: list[dict], tools: list[dict], tool_choice: str = "auto"):
             return client.chat.completions.create(model=model, messages=messages, tools=tools, tool_choice=tool_choice,
                                                   temperature=0.2, parallel_tool_calls=False, **_extra(model))
         except BadRequestError as exc:
+            # Diagnose provider schema failures without recording failed arguments,
+            # user messages, or the untrusted failed_generation payload.
+            detail = str(exc)
+            kind = 'missing_tool_call' if 'model did not call a tool' in detail else 'schema' if 'did not match schema' in detail else 'request'
+            paths = sorted(set(re.findall(r'`(/[A-Za-z0-9_/]+)`', detail)))
+            log.warning("AI model %s rejected response: kind=%s paths=%s", model, kind, paths)
             # Rejected generations never executed. Let an independent model regenerate
             # from the original context; never parse or execute failed_generation.
             if exc.code != "tool_use_failed" or model == models()[-1]:

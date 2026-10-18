@@ -113,3 +113,40 @@ class BuyingTests(TestCase):
         self.brief()
         result=self.engine.execute('save_buying_brief',{'goal':'Gift','category':'gift_bundle','group_size':5},self.actor)
         self.assertEqual(result['error']['code'],'buyer_count_mismatch')
+
+    def test_explicit_combined_budget_is_saved_per_buyer_without_increasing_total(self):
+        text = 'I am splitting with another friend and we have a combined budget of $60 dollars. Give me gift ideas.'
+        ChatMessage.objects.create(group=self.source, member=self.owner, direction='in', seq=2, text_redacted=text)
+        args = {'goal':'Birthday gift','category':'gift_bundle','group_size':2,'budget_total':60,'new_goal':True}
+        result = self.engine.execute('save_buying_brief', args, self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['data']['budget_per_person_cents'],3000)
+        self.assertEqual(result['data']['budget_total_cents'],6000)
+        self.assertEqual(result['data']['group_size'],2)
+        self.assertEqual(self.engine.execute('save_buying_brief',{**args,'new_goal':False,'budget_per_person':60},self.actor)['error']['code'],'budget_mismatch')
+
+    def test_per_buyer_budget_is_not_divided_and_total_preserves_odd_cent(self):
+        args = {'goal':'Shared equipment','category':'electronics','group_size':2,'new_goal':True}
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=2,text_redacted='Equipment for 2 buyers, $60 each')
+        result = self.engine.execute('save_buying_brief',{**args,'budget_per_person':60},self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['data']['budget_per_person_cents'],6000)
+        self.assertEqual(result['data']['budget_total_cents'],12000)
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=3,text_redacted='Our new budget is $60.01 total for 2 buyers')
+        result = self.engine.execute('save_buying_brief',{**args,'budget_total':60.01},self.actor)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['data']['budget_per_person_cents'],3000)
+        self.assertEqual(result['data']['budget_total_cents'],6001)
+
+    def test_model_inferred_count_requires_real_source_evidence(self):
+        text = 'My roommate and I are sharing equipment. The total budget is $120.'
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=2,text_redacted=text)
+        args = {'goal':'Shared equipment','category':'electronics','group_size':2,'budget_total':120,'new_goal':True,
+                'group_size_evidence':'My roommate and I'}
+        result = self.engine.execute('save_buying_brief',args,self.actor)
+        self.assertTrue(result['ok'],result)
+        state = PhotonSession.objects.get(member=self.owner).planning_state
+        self.assertTrue(state['_buyer_count_confirmed'])
+        self.assertEqual(state['budget_per_person_cents'],6000)
+        result = self.engine.execute('save_buying_brief',{**args,'group_size_evidence':'an invented phrase'},self.actor)
+        self.assertEqual(result['error']['code'],'buyer_count_evidence_missing')

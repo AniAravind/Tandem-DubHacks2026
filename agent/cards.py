@@ -119,7 +119,7 @@ def _listed(o: dict) -> str:
 
 def live_offers_text(d: dict) -> str:
     if not d.get("offers"):
-        return ("🌐 I searched the web but didn’t find listings worth sharing for that. "
+        return ("I looked, but none of the listings were a good enough match to recommend. "
                 "Try a more specific place, item, or date range.")
     lines = ["🌐 Live picks from the web", ""]
     for o in d["offers"]:
@@ -128,8 +128,8 @@ def live_offers_text(d: dict) -> str:
         lines += [f"{o['label']}. {o['title']}", f"{_listed(o)} on {o['source']}{estimate}{fit}", o["url"], ""]
     if any(o.get("kind") == "flight" for o in d["offers"]):
         lines.append("Flight fares are advertised prices only: dates, passenger coverage, baggage and round-trip pricing need checking on the source.\n")
-    lines.append("Real listings, not Tandem quotes: prices can change and checkout isn’t available for these. "
-                 "Reply with a letter to put one on your planning page, or say “compare A and B”.")
+    lines.append("These are store listings, not Tandem quotes, so double-check prices on the site. Checkout happens there. "
+                 "Want a closer look? Say “compare A and B”, or pick a letter to add it to your plan.")
     return "\n".join(lines)
 
 

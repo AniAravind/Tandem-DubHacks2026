@@ -113,31 +113,32 @@ class LiveSearchTests(TestCase):
         self.fake.status = 500
         self.assertEqual(self.search(query="other")["error"]["code"], "live_search_unavailable")
 
-    def test_live_turn_is_server_written_with_one_model_call(self):
+    def test_live_turn_returns_results_to_model_before_finishing(self):
         calls = []
         def llm(messages, tools, **kw):
             calls.append(1)
+            if len(calls) > 1:
+                return reply('Here are the listings.')
             return reply(calls=[tool_call("live_search", {"query": "South Lake Tahoe cabin rental", "kind": "stay", "group_size": 6,
                                                            "dates": {"start": "2026-11-14", "end": "2026-11-16"}})])
         self.say("show me real cabins on the web")
         out = Orchestrator(self.group.id, llm_chat=llm).run(self.actor, text="show me real cabins on the web")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertIn("B. Little Bear Cabin 536", out[0].text)
         self.assertIn("C. Tahoe cabins guide\nprice not listed", out[0].text)
         self.assertIn("https://www.vrbo.com/2023227312345678ha", out[0].text)   # long listing ids are not card numbers
         self.assertIn("not Tandem quotes", out[0].text)
         self.assertEqual(out[0].card.type, "LiveOffersCard")
 
-    def test_discovery_rejects_premature_publication_and_returns_real_links(self):
+    def test_model_chosen_research_returns_source_links_for_varied_requests(self):
         for request in ("Give me ideas of what to buy", "Recommend options for a weekend trip",
                         "What could I get for my home office?"):
             with self.subTest(request=request):
                 responses = iter([
-                    reply(calls=[tool_call('publish_buying_plan', {})]),
                     reply(calls=[tool_call('live_search', {'query': 'Tahoe cabin rental', 'kind': 'stay', 'group_size': 6})]),
                 ])
                 def model(*args, **kwargs):
-                    return next(responses)
+                    return next(responses, reply("Here are the listings."))
                 self.say(request)
                 out = Orchestrator(self.group.id, llm_chat=model).run(self.actor, text=request)
                 self.assertIn('https://www.vrbo.com/2023227312345678ha', out[0].text)
@@ -150,6 +151,52 @@ class LiveSearchTests(TestCase):
         orchestrator.tool_results = [('live_search', result['data']), ('publish_buying_plan', {})]
         out = orchestrator.compose(None)
         self.assertIn('https://www.vrbo.com/2023227312345678ha', out[0].text)
+
+    def test_model_controls_tool_sequence_and_combined_budget_research(self):
+        self.fake.rows = [{'title':'Spider-Man graphic novel $24', 'url':'https://example.com/products/graphic-novel', 'content':'Paperback gift. $24 listed.'}]
+        request = 'Gift ideas for my friend. I am splitting with another friend and have a combined budget of $60 dollars.'
+        self.say(request)
+        calls = []
+        def model(messages, tools, **kwargs):
+            calls.append(kwargs)
+            if len(calls) > 2:
+                return reply('Here are the listings.')
+            if len(calls) == 1:
+                return reply(calls=[tool_call('save_buying_brief', {'goal':'Birthday gift', 'category':'gift', 'group_size':2,
+                    'budget_total':60, 'requirements':['Spider-Man graphic novel'], 'new_goal':True})])
+            self.assertNotIn('tool_choice',kwargs)
+            self.assertIn('publish_plan',[tool['function']['name'] for tool in tools])
+            return reply(calls=[tool_call('live_search', {'query':'Spider-Man graphic novel gift under $60', 'kind':'gift',
+                'group_size':2,'budget_per_person_max':30,'route':{}})])
+        out = Orchestrator(self.group.id, llm_chat=model).run(self.actor, text=request)
+        self.assertEqual(len(calls),3)
+        self.assertIn('https://example.com/products/graphic-novel',out[0].text)
+        self.assertFalse(TripPlan.objects.filter(source_group=self.group).exists())
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.planning_state['budget_per_person_cents'],3000)
+
+    def test_research_can_precede_brief_and_preserves_sourced_answer(self):
+        self.say("Cabin weekend for 6 people, $200 each, with a hot tub")
+        responses = iter([
+            reply(calls=[tool_call('live_search', {'query':'Tahoe hot tub cabin', 'kind':'stay', 'group_size':6})]),
+            reply(calls=[tool_call('save_buying_brief', {'goal':'Tahoe cabin weekend', 'category':'rental',
+                'group_size':6, 'budget_per_person':200, 'requirements':['hot tub', 'quiet location']})]),
+            reply('My pick is Blue Bear: the hot tub earns its keep. https://www.vrbo.com/2023227312345678ha'),
+        ])
+        out = Orchestrator(self.group.id, llm_chat=lambda *a, **kw: next(responses)).run(self.actor)
+        self.assertIn('the hot tub earns its keep', out[0].text)
+        self.session.refresh_from_db()
+        self.assertTrue(LiveOffer.objects.filter(group=self.group,
+            brief_revision=self.session.planning_state['revision']).exists())
+
+    def test_failed_live_search_explains_outage_without_hallucinated_fallback(self):
+        self.fake.status = 500
+        self.say('Show me real options')
+        def model(*args, **kwargs):
+            return reply(calls=[tool_call('live_search', {'query':'Tahoe cabin', 'kind':'stay','group_size':6})])
+        out = Orchestrator(self.group.id, llm_chat=model).run(self.actor,text='Show me real options')
+        self.assertIn('couldn’t retrieve real listings',out[0].text)
+        self.assertNotIn('send me the link',out[0].text)
 
     def test_letter_reply_features_offer_on_planning_page_without_payment(self):
         self.search()

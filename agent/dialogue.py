@@ -74,6 +74,8 @@ def remember_answer(group, text, seq):
             if cents != state.get('budget_per_person_cents'):
                 state['revision'] = uuid.uuid4().hex
             state['budget_per_person_cents'] = cents
+            state['budget_basis'] = 'per_person'
+            state['budget_total_cents'] = cents * state.get('group_size', 1)
             state['_budget_answer_seq'] = seq
     if dialogue.get('answer_type') == 'count' and re.fullmatch(r'\s*\d{1,2}\s*', text):
         count = int(text)
@@ -81,6 +83,10 @@ def remember_answer(group, text, seq):
             if count != state.get('group_size'):
                 state['revision'] = uuid.uuid4().hex
             state['group_size'] = count
+            if state.get('budget_basis') == 'total' and state.get('budget_total_cents') is not None:
+                state['budget_per_person_cents'] = state['budget_total_cents'] // count
+            elif state.get('budget_per_person_cents') is not None:
+                state['budget_total_cents'] = state['budget_per_person_cents'] * count
             state['_buyer_count_confirmed'] = True
             state['_count_answer_seq'] = seq
     session.planning_state = state

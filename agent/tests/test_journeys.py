@@ -85,7 +85,7 @@ class PrivateJourneyTests(TestCase):
                                     dates={"start": "2026-11-14", "end": "2026-11-16"}))
         self.assertIn("Your shortlist", out[0].text_redacted)
         self.assertEqual([m.card["type"] for m in out if m.card], ["OptionCard"] * 3)
-        self.assertEqual(self.model.calls, 2)                          # no narration call after a server-written shortlist
+        self.assertEqual(self.model.calls, 3)                          # model inspects results before deciding to finish
         cabin_ids = set(Option.objects.filter(group=self.group).values_list("id", flat=True))
 
         out = self.send("actually forget the trip. birthday gift for my sister, just me, $40",

@@ -48,12 +48,16 @@ def save(member, args):
         raise RuleError('goal_change_not_confirmed', 'This is an answer to the pending question, not a new purchase. Preserve the current goal and confirmed facts.')
     base = {} if changing else previous
     count = explicit_buyer_count(latest)
+    evidence = args.get('group_size_evidence', '').strip()
+    if evidence and ' '.join(evidence.casefold().split()) not in ' '.join(latest.casefold().split()):
+        raise RuleError('buyer_count_evidence_missing', 'group_size_evidence must quote the latest user message exactly.')
     if count is not None and args['group_size'] != count:
         raise RuleError('buyer_count_mismatch', f'The user explicitly specified {count} total buyers. Use group_size={count}.')
-    if base.get('_buyer_count_confirmed', bool(base.get('group_size'))) and base.get('group_size') and args['group_size'] != base['group_size'] and count is None:
+    if base.get('_buyer_count_confirmed', bool(base.get('group_size'))) and base.get('group_size') and args['group_size'] != base['group_size'] and count is None and not evidence:
         raise RuleError('buyer_count_not_confirmed', f"Keep the confirmed {base['group_size']} buyers; a short answer or reworded goal cannot change the roster.")
     budget = args.get('budget_per_person')
-    if budget is not None:
+    total = args.get('budget_total')
+    if budget is not None or total is not None:
         known = set()
         if not changing:
             for text in ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').values_list('text_redacted', flat=True)[:50]:
@@ -62,12 +66,25 @@ def save(member, args):
                     break
             if not known and base.get('budget_per_person_cents') is not None:
                 known.add(base['budget_per_person_cents'])
+                if base.get('budget_total_cents') is not None:
+                    known.add(base['budget_total_cents'])
             if message and base.get('_budget_answer_seq') == message.seq:
                 known = {base['budget_per_person_cents']}
         else:
             known = planning_amounts_in(latest)
-        if round(budget * 100) not in known:
-            raise RuleError('budget_not_confirmed', 'Use the confirmed budget from the saved brief or the current explicit budget answer. Do not repeatedly ask to confirm a budget already provided.')
+        stated = total if total is not None else budget
+        if round(stated * 100) not in known:
+            raise RuleError('budget_not_confirmed', 'Pass the user-stated amount: budget_total for a combined budget or budget_per_person for a per-buyer budget. The server calculates the split; do not pass a derived split as a directly stated amount.')
+        if total is not None:
+            per_buyer_cents = round(total * 100) // args['group_size']
+            if budget is not None and round(budget * 100) != per_buyer_cents:
+                raise RuleError('budget_mismatch', 'budget_per_person must equal budget_total divided by group_size. Prefer supplying only the user-stated budget_total.')
+            budget = per_buyer_cents / 100
+    elif base.get('budget_basis') == 'total' and base.get('budget_total_cents') is not None:
+        total = base['budget_total_cents'] / 100
+        budget = (base['budget_total_cents'] // args['group_size']) / 100
+    elif base.get('budget_basis') == 'per_person' and base.get('budget_per_person_cents') is not None:
+        budget = base['budget_per_person_cents'] / 100
     recommendations = args.get('recommendations', base.get('recommendations', []))
     if any(amounts_in(item) or 'http' in item.lower() for item in recommendations):
         raise RuleError('unverified_offer', 'General recommendations must be qualitative. Only catalog tools can supply prices or merchant offers.')
@@ -78,9 +95,11 @@ def save(member, args):
     for item in args.get('decision_details', []):
         details[item['topic'].casefold()] = {key:redact(value) for key,value in item.items()}
     state = {**base, 'goal':base.get('goal') or redact(args['goal']), 'category':base.get('category') or category,
-             'group_size':count or (base.get('group_size') if base.get('_buyer_count_confirmed', True) else None) or args['group_size'],
-             '_buyer_count_confirmed':count is not None or base.get('_buyer_count_confirmed', False),
+             'group_size':count or (args['group_size'] if evidence else None) or (base.get('group_size') if base.get('_buyer_count_confirmed', True) else None) or args['group_size'],
+             '_buyer_count_confirmed':count is not None or bool(evidence) or base.get('_buyer_count_confirmed', False),
              'budget_per_person_cents':round(budget * 100) if budget is not None else base.get('budget_per_person_cents'),
+             'budget_total_cents':round(total * 100) if total is not None else round(budget * 100) * args['group_size'] if budget is not None else base.get('budget_total_cents'),
+             'budget_basis':'total' if total is not None else 'per_person' if budget is not None else base.get('budget_basis'),
              'summary':redact(args.get('summary', base.get('summary', ''))),
              'requirements':[redact(v) for v in args.get('requirements', base.get('requirements', []))],
              'recommendations':[redact(v) for v in recommendations], 'decision_details':list(details.values()),
@@ -88,7 +107,7 @@ def save(member, args):
              'research_kinds':list(dict.fromkeys(args.get('research_kinds', base.get('research_kinds', [])))),
              'plan_sections':[{key:redact(value) for key,value in item.items()} for item in sections]}
     revision = base.get('revision')
-    constraints = ('category', 'group_size', 'budget_per_person_cents', 'requirements', 'decision_details')
+    constraints = ('category', 'group_size', 'budget_per_person_cents', 'budget_total_cents', 'requirements', 'decision_details')
     unchanged = all(base.get(key) == state.get(key) for key in constraints)
     state['revision'] = revision if unchanged and revision else uuid.uuid4().hex
     session.planning_state = state

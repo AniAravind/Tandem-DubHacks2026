@@ -290,7 +290,19 @@
             "type": "number",
             "minimum": 0,
             "maximum": 100000,
-            "description": "User-confirmed USD dollars, not cents. Omit if unknown. A budget is not an offer or permission to charge."
+            "description": "Use when the user directly states a per-buyer budget, in USD dollars. For a combined budget use budget_total instead; the server calculates the per-buyer amount. Omit if unknown. A budget is not an offer or payment authorization."
+          },
+          "budget_total": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2000000,
+            "description": "User-stated combined budget for the entire purchase, in USD dollars. The server divides this by group_size. Preserve the stated total rather than passing a derived amount as budget_per_person. Omit if the user only states a per-buyer budget."
+          },
+          "group_size_evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "Exact phrase from the latest user message supporting the interpreted number of buyers. Use this for counts stated in words or relationships so the server can retain that count as confirmed without keyword-specific parsing. Do not include the recipient unless the user says they are paying."
           },
           "summary": {
             "type": "string",
@@ -484,10 +496,6 @@
           "route": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "origin",
-              "destination"
-            ],
             "properties": {
               "origin": {
                 "type": "string",
