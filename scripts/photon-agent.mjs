@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
+import { recoveryLoop } from './photon-recovery.mjs';
 import { plainText } from "../shared/message-text.mjs";
 
 export function renderMessage(message) {
@@ -65,6 +66,7 @@ export async function main() {
   }
   let stopping = false;
   let current;
+  const recovery = recoveryLoop(backend, () => stopping, { projectId: process.env.SPECTRUM_PROJECT_ID, projectSecret: process.env.SPECTRUM_PROJECT_SECRET });
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; });
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const context = route => ({ sender: route.sender, route: route.allocation === 'shared' ? 'shared' : route.destination });
@@ -134,6 +136,8 @@ export async function main() {
       await pause(2000);
     }
   } finally {
+    stopping = true;
+    await recovery;
     if (current) {
       current.stopped = true;
       await current.app.stop();

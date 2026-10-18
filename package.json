@@ -6,7 +6,7 @@
   },
   "scripts": {
     "photon": "node scripts/photon-agent.mjs",
-    "test:photon": "node --test scripts/photon-agent.test.mjs",
+    "test:photon": "node --test scripts/photon-agent.test.mjs scripts/photon-recovery.test.mjs",
     "build": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
   },
   "dependencies": {
