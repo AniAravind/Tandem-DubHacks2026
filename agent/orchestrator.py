@@ -259,7 +259,8 @@ class Orchestrator:
         from chat.models import PhotonSession
         tools = TOOLS
         if PhotonSession.objects.filter(member__group=self.group).exists():
-            tools = [tool for tool in TOOLS if tool['function']['name'] in PRIVATE_TOOLS]
+            allowed = PRIVATE_TOOLS - {'search_options','publish_plan'} if settings.PRIVATE_LIVE_ONLY else PRIVATE_TOOLS
+            tools = [tool for tool in TOOLS if tool['function']['name'] in allowed]
         else:
             tools = [tool for tool in TOOLS if tool['function']['name'] != 'remember_preference']
         for attempt in range(2):                                    # one retry on timeout / API error

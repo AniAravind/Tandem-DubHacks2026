@@ -150,14 +150,20 @@ def publish(member, featured_offer=None, featured_offer_id=None):
         group = Group.objects.create(name=state['goal'][:120], channel='web', timezone=member.group.timezone)
         plan = TripPlan.objects.create(source_group=member.group, group=group, title=state['goal'][:120],
             summary=state['summary'] or state['goal'], expected_members=state['group_size'], details=details)
-    elif not plan.selected_option_id or (plan.details.get('payment_simulation') and not plan.group.purchases.exists()):
+    else:
+        from django.conf import settings
+        if settings.PRIVATE_LIVE_ONLY and plan.selected_option_id and not plan.group.purchases.exists():
+            plan.selected_option = None
+            plan.details = {key:value for key,value in plan.details.items() if key not in {'payment_simulation','price_source'}}
+            plan.save(update_fields=['selected_option','details','updated_at'])
+    if plan is not None and (not plan.selected_option_id or (plan.details.get('payment_simulation') and not plan.group.purchases.exists())):
         # Republishing keeps the same link but shows the newest web results and the latest featured choice.
         keep = {k: plan.details[k] for k in ('payment_simulation', 'price_source') if k in plan.details}
         plan.details = {**details, **keep, 'featured_offer': featured_offer or plan.details.get('featured_offer'),
                         'featured_offer_id':str(chosen.id) if chosen else plan.details.get('featured_offer_id')}
         plan.save(update_fields=['details', 'updated_at'])
     from purchases.plans import auto_price
-    auto_price(plan)                     # price it from the chosen web result or the budget, so shares show up front
+    auto_price(plan)                     # Demo only; live private plans retain sourced estimates without checkout.
     return {'plan_id':str(plan.id), 'title':plan.title, 'expected_members':plan.expected_members,
             'share_url':plan_url(plan), 'checkout_ready':bool(plan.selected_option_id), 'status':'quoted' if plan.selected_option_id else 'planning_only',
             'budget_per_person_cents':state.get('budget_per_person_cents'), 'featured_offer':plan.details.get('featured_offer'),

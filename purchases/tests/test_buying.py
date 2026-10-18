@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from agent.context import build_group_state
 from agent.orchestrator import Orchestrator
@@ -12,6 +12,7 @@ from purchases.tests.test_plans import SharedPlanTests
 from urllib.parse import parse_qs, urlparse
 
 
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class BuyingTests(TestCase):
     setUp = SharedPlanTests.setUp
     join = SharedPlanTests.join

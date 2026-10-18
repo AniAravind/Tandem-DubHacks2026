@@ -84,6 +84,8 @@ if not DEBUG:
 # Tandem config
 PAYMENTS_GATEWAY = os.getenv("PAYMENTS_GATEWAY", "simulated")
 DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
+# Private chats use retrieved sources even when the separate demo is enabled.
+PRIVATE_LIVE_ONLY = os.getenv("PRIVATE_LIVE_ONLY", "1") == "1"
 DEMO_ADMIN_KEY = os.getenv("DEMO_ADMIN_KEY", "")          # the backstage demo buttons stay locked while this is empty
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")

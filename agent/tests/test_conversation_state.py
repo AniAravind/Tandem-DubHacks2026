@@ -22,6 +22,7 @@ from purchases.tests.test_live import FakeTavily
 
 
 @override_settings(CACHES={'default':{'BACKEND':'django.core.cache.backends.locmem.LocMemCache','LOCATION':'conversation-state'}})
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class ConversationStateTests(TestCase):
     def setUp(self):
         cache.clear()

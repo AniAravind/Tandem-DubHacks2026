@@ -1,11 +1,12 @@
 from unittest.mock import Mock, patch
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from agent.orchestrator import Orchestrator
 from chat.models import PhotonSession, ChatMessage
 from purchases.models import TripPlan
 from purchases.tests import test_plans
 
 
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class PrivateChoiceTests(TestCase):
     setUp = test_plans.SharedPlanTests.setUp
 

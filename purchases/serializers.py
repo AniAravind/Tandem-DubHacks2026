@@ -71,6 +71,10 @@ def option_json(option: Option) -> dict:
 
 def latest_options_json(group: Group) -> dict:
     """The options from the group's most recent search, best first."""
+    from django.conf import settings
+    from chat.models import PhotonSession
+    if settings.PRIVATE_LIVE_ONLY and PhotonSession.objects.filter(member__group=group).exists():
+        return {'options': []}
     newest = Option.objects.filter(group=group).order_by("-created_at").first()
     if newest is None:
         return {"options": []}

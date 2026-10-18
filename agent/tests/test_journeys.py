@@ -46,6 +46,7 @@ class Model:
 
 
 @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "journeys"}})
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class PrivateJourneyTests(TestCase):
     def setUp(self):
         cache.clear()

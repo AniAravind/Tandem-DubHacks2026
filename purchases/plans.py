@@ -81,6 +81,8 @@ def plan_price(plan):
             return listed * n, source
         if isinstance(listed, int) and listed > 0 and unit == 'listed' and details.get('category') != 'rental':
             return listed, source
+    if settings.PRIVATE_LIVE_ONLY:
+        return None
     budget = details.get('budget_per_person_cents')
     if isinstance(budget, int) and budget > 0:
         return budget * n, f"your ${budget // 100:,} per-person budget × {n}"
@@ -89,7 +91,7 @@ def plan_price(plan):
 
 def auto_price(plan):
     """Attach a priced option to a planning-only plan so its shares appear before anyone pays. Safe to repeat."""
-    if Purchase.objects.filter(group=plan.group).exists():
+    if settings.PRIVATE_LIVE_ONLY or Purchase.objects.filter(group=plan.group).exists():
         return False
     price = plan_price(plan)
     if not price:
@@ -156,6 +158,8 @@ def expires_at(plan):
 def publish(member, args):
     from chat.services import redact
     from purchases.rules import RuleError
+    if settings.PRIVATE_LIVE_ONLY:
+        raise RuleError('live_search_required', 'Demo catalog options cannot be published from a live private chat. Use retrieved offers with publish_buying_plan.')
     if not private_planner(member):
         raise RuleError('private_planning_only', 'Publish a plan from your private Tandem conversation.')
     Group.objects.select_for_update().get(pk=member.group_id)

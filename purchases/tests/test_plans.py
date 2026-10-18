@@ -2,7 +2,7 @@ import hashlib
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from agent.tests.helpers import seed
@@ -13,6 +13,7 @@ from purchases.plans import owner_url
 from purchases.rules import RulesEngine
 
 
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class SharedPlanTests(TestCase):
     def setUp(self):
         seed()

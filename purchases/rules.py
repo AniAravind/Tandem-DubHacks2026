@@ -844,6 +844,9 @@ class RulesEngine:
 
     # ------------------------------------------------------------------ the six tools
     def _search_options(self, member: Member, args: dict) -> dict:
+        from purchases.plans import private_planner
+        if settings.PRIVATE_LIVE_ONLY and private_planner(member):
+            raise RuleError('live_search_required', 'The local catalog contains demo data. Use live_search for real source links; if search fails, explain that instead of substituting demo listings.')
         members = consensus.active_members(member.group_id)
         from purchases.plans import private_planner
         if args["group_size"] != len(members) and not private_planner(member):
@@ -978,6 +981,9 @@ class RulesEngine:
             raise RuleError(e.code, e.message)
 
     def _compare_options(self, member, args):
+        from purchases.plans import private_planner
+        if settings.PRIVATE_LIVE_ONLY and private_planner(member) and args.get('option_ids'):
+            raise RuleError('live_search_required', 'Compare retrieved live offers instead of demo catalog options.')
         from purchases import compare
         try:
             return compare.compare(member, args)

@@ -42,6 +42,7 @@ class NoLLM:
 
 @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "live-tests"}})
 @patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test"})
+@override_settings(PRIVATE_LIVE_ONLY=False)
 class LiveSearchTests(TestCase):
     def setUp(self):
         cache.clear()
