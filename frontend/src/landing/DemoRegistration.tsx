@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import QRCode from "qrcode";
-import tandemMark from "../assets/tandem-mark.png";
+import tandemMark from "../assets/tandem-mark-blue.png";
 import "./demo-registration.css";
 
 type Connection = {
