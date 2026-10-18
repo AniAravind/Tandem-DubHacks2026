@@ -76,7 +76,7 @@ class SimulatedVisaAgentGateway:
 
     # ---------- helpers ----------
     def _id(self, prefix: str) -> str:
-        return f"{prefix}_sim_{secrets.token_hex(4)}"
+        return f"{prefix}_{secrets.token_hex(6)}"
 
     def _resp(self, event_type: str, body: dict) -> dict:
         out = {"simulated": True, "request_id": self._id("req"), **body}

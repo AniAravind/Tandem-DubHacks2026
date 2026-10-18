@@ -26,13 +26,10 @@ export default function SecureCardField({
           value={pretty}
           disabled={disabled}
           aria-invalid={errorId ? true : undefined}
-          aria-describedby={errorId ? `${id}-help ${errorId}` : `${id}-help`}
+          aria-describedby={errorId || undefined}
           onChange={(e) => onPan(e.target.value)}
         />
       </div>
-      <p id={`${id}-help`} className="fine">
-        Demo: 4111 1111 1111 1111 approves, …0002 declines.
-      </p>
     </section>
   );
 }

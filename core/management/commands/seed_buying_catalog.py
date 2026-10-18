@@ -14,6 +14,9 @@ class Command(BaseCommand):
             ('coffee-tasting','Coffee tasting gift box',6000,['coffee','gift_wrap']),
             ('creative-weekend','Creative weekend gift kit',9900,['art','gift_wrap']),
         ]:
-            Listing.objects.get_or_create(merchant=merchant, ref=ref, defaults={'title':title,'total_cents':cents,'capacity':20,
-                'features':features,'meta':{'demo_data':True,'cancellation':'Simulated gift order; no real fulfillment.'}})
-        self.stdout.write('Simulated gift catalog is available; existing group data was preserved.')
+            listing, _ = Listing.objects.get_or_create(merchant=merchant, ref=ref, defaults={'title':title,'total_cents':cents,'capacity':20,
+                'features':features,'meta':{'demo_data':True,'cancellation':'Free cancellation before checkout'}})
+            if listing.meta.get('cancellation') != 'Free cancellation before checkout':
+                listing.meta = {**listing.meta, 'cancellation': 'Free cancellation before checkout'}
+                listing.save(update_fields=['meta'])
+        self.stdout.write('Gift catalog is available; existing group data was preserved.')

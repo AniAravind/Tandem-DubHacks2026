@@ -121,7 +121,7 @@ class ConsentService:
     def tokenize(self, token: str, transient_card_token: str, header_member_id: str | None = None) -> dict:
         share = read_consent_token(token, header_member_id)["share"]
         if not TRANSIENT_RE.match(transient_card_token or ""):
-            raise ConsentError("invalid_transient_token", "Use the simulated secure card field.")
+            raise ConsentError("invalid_transient_token", "Use the secure card field.")
         share = Share.objects.select_for_update().get(pk=share.pk)
         purchase = share.purchase
         option = purchase.option

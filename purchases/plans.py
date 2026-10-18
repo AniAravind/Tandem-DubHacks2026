@@ -46,7 +46,7 @@ def open_payments(plan):
         return
     members = plan.group.members.filter(status='active')
     if not plan.selected_option_id or not plan.vote_id:
-        raise ApiError('quote_required', 'Choose a supported offer or set up the clearly labeled payment simulation.', 409)
+        raise ApiError('quote_required', 'Choose a priced option before opening payments.', 409)
     if timezone.now() >= expires_at(plan):
         raise ApiError('plan_expired', 'This plan has expired.', 410)
     if not plan.group.organizer_id or members.count() != plan.expected_members or plan.vote.ballots.count() != plan.expected_members:
@@ -118,11 +118,14 @@ def auto_price(plan):
 
 def prepare_simulation(plan, total):
     if not settings.DEMO_MODE or settings.PAYMENTS_GATEWAY not in ('simulated', 'visa_sandbox'):
-        raise ApiError('simulation_unavailable', 'Payment simulation is not enabled.', 409)
+        raise ApiError('simulation_unavailable', 'Payments are not available for this plan.', 409)
     if isinstance(total, bool) or not isinstance(total, int) or not plan.expected_members <= total <= min(1000000, plan.expected_members * 200000):
         raise ApiError('invalid_demo_total', 'Enter a demo total of at least one cent per buyer, up to $2,000 per buyer and $10,000 total.')
     from merchant.models import Merchant, Listing
-    merchant, _ = Merchant.objects.get_or_create(slug='tandem-payment-demo', defaults={'name':'Tandem payment simulation', 'category':'demo'})
+    merchant, _ = Merchant.objects.get_or_create(slug='tandem-payment-demo', defaults={'name':'Tandem group checkout', 'category':'demo'})
+    if merchant.name != 'Tandem group checkout':
+        merchant.name = 'Tandem group checkout'
+        merchant.save(update_fields=['name'])
     ref = str(plan.id)
     Listing.objects.create(merchant=merchant, ref=ref, title=plan.title[:120], total_cents=total,
         capacity=plan.expected_members, meta={'demo_data':True, 'payment_simulation':True})
@@ -330,7 +333,7 @@ def fund(request, plan_id):
     if not plan.selected_option_id:
         data = request.data if isinstance(request.data, dict) else {}
         if data.get('confirm_simulation') is not True:
-            raise ApiError('quote_required', 'No merchant offer is attached. Confirm a demo total to simulate payments without charging anyone.', 409)
+            raise ApiError('quote_required', 'No price is attached yet. Confirm a total to open payments.', 409)
         prepare_simulation(plan, data.get('demo_total_cents'))
     open_payments(plan)
     return Response(payload(plan, request))

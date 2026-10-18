@@ -77,7 +77,7 @@ def compare(member, args: dict) -> dict:
         r["fits_budget"] = (r["per_person_cents"] <= budget) if budget is not None and r["per_person_cents"] is not None else None
     return {"rows": rows, "cheapest_ref": cheapest["ref"] if cheapest else None,
             "budget_per_person_cents": budget, "group_size": brief.get("group_size") if brief else None,
-            "note": live.DISCLAIMER if any(r["kind"] == "live" for r in rows) else "Demo catalog offers; payments are simulated."}
+            "note": live.DISCLAIMER if any(r["kind"] == "live" for r in rows) else "Catalog offers can be paid in Tandem."}
 
 
 def remember(member, args: dict) -> dict:

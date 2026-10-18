@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import tandemMark from "../assets/tandem-mark-blue.png";
 
 // A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Prices match the seeded
-// Tahoe demo (test payments only).
+// Tahoe demo.
 type Msg = { from: "me" | "tandem"; at: number; lines: string[]; link?: boolean; typing?: number };
 
 const THREAD: Msg[] = [
@@ -136,7 +136,6 @@ export default function PhoneStory({ onTryDemo }: { onTryDemo: () => void }) {
                 <div className="ps-cta" style={{ opacity: outro, pointerEvents: outro > 0.5 ? "auto" : "none" }}>
                   <p>Your turn.</p>
                   <button className="ps-cta-btn" onClick={onTryDemo} tabIndex={outro > 0.5 ? 0 : -1}>Try the live demo</button>
-                  <small>Demo · test payments only</small>
                 </div>
                 <span className="im-home" aria-hidden="true" />
               </div>

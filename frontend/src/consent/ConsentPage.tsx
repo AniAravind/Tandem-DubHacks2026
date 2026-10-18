@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import CanCanNever from "./CanCanNever";
 import DeclineSheet from "./DeclineSheet";
 import HeldSuccess from "./HeldSuccess";
+import ProcessingSheet from "./ProcessingSheet";
 import ListingHero from "./ListingHero";
 import GroupProgress from "./GroupProgress";
 import MandateBox from "./MandateBox";
@@ -145,6 +146,9 @@ export default function ConsentPage() {
     fail(e.message || "Something went wrong. Nothing was charged.");
   }
 
+  const [processing, setProcessing] = useState<number | null>(null);
+  const [receipt, setReceipt] = useState<{ ref: string; at: Date } | null>(null);
+
   async function placeHold(assertion: Assertion) {
     const digits = pan.replace(/\D/g, "");
     const cardLast4 = last4FromPan(digits);
@@ -158,7 +162,9 @@ export default function ConsentPage() {
     }
     setLast4(attempt.last4);
     const rendered = await getConsent(token, cap);
-    await approve(token, { agent_token_id: attempt.id, cap_cents: cap, consent_text_sha256: rendered.consent_text_sha256, assertion });
+    const result = await approve(token, { agent_token_id: attempt.id, cap_cents: cap, consent_text_sha256: rendered.consent_text_sha256, assertion }) as { hold?: { hold_id?: string } };
+    const id = result?.hold?.hold_id;
+    if (id) setReceipt({ ref: "TDM-" + id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase(), at: new Date() });
   }
 
   async function run(action: Action, assertion: Assertion) {
@@ -166,8 +172,13 @@ export default function ConsentPage() {
     setBusy(true);
     setError("");
     try {
-      if (action === "approve") await placeHold(assertion);
-      else await reconfirmShare(data.share_id, data.member.id, assertion);
+      if (action === "approve") {
+        // A short, honest progress sequence while the hold goes through (never shorter than ~1.8s).
+        setProcessing(0);
+        const t1 = window.setTimeout(() => setProcessing(1), 600), t2 = window.setTimeout(() => setProcessing(2), 1200);
+        try { await Promise.all([placeHold(assertion), new Promise((r) => window.setTimeout(r, 1800))]); }
+        finally { window.clearTimeout(t1); window.clearTimeout(t2); setProcessing(null); }
+      } else await reconfirmShare(data.share_id, data.member.id, assertion);
       setConfirming(null);
       if (navigator.vibrate) navigator.vibrate(10);
       await refresh();
@@ -180,7 +191,7 @@ export default function ConsentPage() {
 
   async function start(action: Action) {
     if (!data) return;
-    if (action === "approve" && pan.replace(/\D/g, "").length !== 16) return fail("Enter the full 16-digit test card number.");
+    if (action === "approve" && pan.replace(/\D/g, "").length !== 16) return fail("Enter your 16-digit card number.");
     setError("");
     if (!passkeyUnavailable.current) {
       const abort = new AbortController();
@@ -226,7 +237,7 @@ export default function ConsentPage() {
     <main className="consent-page">
       <header className="consent-header">
         <Link to="/" className="brand"><Mark /><span>tandem<span className="brand-period">.</span></span></Link>
-        <span className="payment-preview-note">{data?.payments_mode === "visa_sandbox" ? "Visa sandbox · test mode" : "Payment preview · no real charges"}</span>
+
       </header>
 
       {screen === "loading" && (
@@ -279,7 +290,8 @@ export default function ConsentPage() {
 
         </StatusScreen>
       )}
-      {screen === "held" && data && <HeldSuccess data={data} last4={last4} links={links} onLeave={onLeave} />}
+      {screen === "held" && data && <HeldSuccess data={data} last4={last4} links={links} onLeave={onLeave} receipt={receipt} />}
+      {processing !== null && data && <ProcessingSheet step={processing} shareCents={data.share_cents} />}
 
       {screen === "form" && data && (
         <div className="consent-form-grid">
@@ -330,6 +342,10 @@ export default function ConsentPage() {
                   </div>
                 )}
                 <p className="fine center">{quickConfirm ? "Same card, same merchant. Only the amount changes." : "Review your approval. You can leave before the plan is finalized."}</p>
+                <details className="about-payment">
+                  <summary>About this payment</summary>
+                  <p>This is a demo build. Holds are placed by Tandem&apos;s payment engine and no real card is charged. Any 16-digit number works; one ending in 0002 shows a decline.</p>
+                </details>
               </div>
             </section>
           </div>

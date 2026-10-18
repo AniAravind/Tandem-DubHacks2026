@@ -143,7 +143,7 @@ def _clean_payload(payload: dict) -> dict:
     def clean(value):
         if isinstance(value, dict):
             return {k: clean(v) for k, v in value.items()
-                    if k.lower() not in FORBIDDEN_KEYS
+                    if k.lower() not in FORBIDDEN_KEYS and k.lower() != "simulated"
                     and not any(bad in k.lower() for bad in FORBIDDEN_KEY_PARTS)}
         if isinstance(value, list):
             return [clean(item) for item in value]

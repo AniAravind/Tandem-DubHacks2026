@@ -111,7 +111,7 @@ class VisaAcceptanceGateway(SimulatedVisaAgentGateway):
         return out
 
     def _id(self, prefix: str) -> str:
-        return super()._id(prefix).replace("_sim_", "_tdm_")          # Tandem-side ids (tokens, mandates)
+        return super()._id(prefix)                                    # Tandem-side ids (tokens, mandates)
 
     # ---------- money: real Visa sandbox calls ----------
     def authorize_hold(self, mandate_id, amount, idempotency_key, member_id=""):

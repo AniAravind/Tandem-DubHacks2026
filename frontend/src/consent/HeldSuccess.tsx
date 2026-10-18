@@ -26,9 +26,9 @@ function steps(data: ConsentPayload): Step[] {
 }
 
 export default function HeldSuccess({
-  data, last4, links, onLeave,
+  data, last4, links, onLeave, receipt,
 }: {
-  data: ConsentPayload; last4: string; links: NextLink[]; onLeave: () => Promise<void>;
+  data: ConsentPayload; last4: string; links: NextLink[]; onLeave: () => Promise<void>; receipt?: { ref: string; at: Date } | null;
 }) {
   const [leaving, setLeaving] = useState(false);
   const canLeave = (data.purchase_state ?? "collecting") === "collecting";
@@ -42,6 +42,14 @@ export default function HeldSuccess({
       <p className="status-lede">
         <strong className="money">{formatUsd(data.share_cents)}</strong> is on hold on {last4 ? `Visa •••• ${last4}` : "your card"}. You&apos;ll be charged only when all {data.purchase.split_count} are in.
       </p>
+      {receipt && (
+        <dl className="hold-receipt">
+          <div><dt>Hold reference</dt><dd>{receipt.ref}</dd></div>
+          <div><dt>Amount</dt><dd className="money">{formatUsd(data.share_cents)}</dd></div>
+          <div><dt>Card</dt><dd>{last4 ? `Visa •••• ${last4}` : "Your card"}</dd></div>
+          <div><dt>Placed</dt><dd>{receipt.at.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</dd></div>
+        </dl>
+      )}
       <ol className="timeline" aria-label="What happens next">
         {steps(data).map((s) => (
           <li key={s.label} className={`timeline-step ${s.state}`} aria-current={s.state === "current" ? "step" : undefined}>
