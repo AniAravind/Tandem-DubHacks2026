@@ -2,7 +2,7 @@
   "name": "tandem-root",
   "private": true,
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
     "photon": "node scripts/photon-agent.mjs",

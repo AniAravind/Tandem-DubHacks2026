@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
+TANDEM_DEPLOYMENT = bool(os.getenv("DYNO")) or os.getenv("TANDEM_DEPLOYMENT") == "1"
+TANDEM_WEB_CONCURRENCY = int(os.getenv("WEB_CONCURRENCY", "3"))
+TANDEM_REQUIRE_WORKER_HEARTBEAT = os.getenv("TANDEM_REQUIRE_WORKER_HEARTBEAT", "1" if TANDEM_DEPLOYMENT else "0") == "1"
 DEBUG = os.getenv("DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 CSRF_TRUSTED_ORIGINS = [u for u in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if u]
@@ -19,6 +22,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "tandem.observability.RequestTracingMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -39,7 +43,7 @@ WSGI_APPLICATION = "tandem.wsgi.application"
 
 DATABASES = {"default": dj_database_url.config(
     default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}", conn_max_age=600,
-    ssl_require=os.getenv("DATABASE_URL", "").startswith("postgres"))}
+    ssl_require=os.getenv("DATABASE_SSL_REQUIRE", "1" if os.getenv("DATABASE_URL", "").startswith("postgres") else "0") == "1")}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 TIME_ZONE = "UTC"
 USE_TZ = True
@@ -89,9 +93,28 @@ MERCHANT_MODE = os.getenv("MERCHANT_MODE", "direct")
 MERCHANT_BASE_URL = os.getenv("MERCHANT_BASE_URL", "http://localhost:8000/merchants")
 
 # Shared cache is required across Heroku web and worker processes.
-if (os.getenv("DYNO") or os.getenv("REDIS_URL") or os.getenv("TANDEM_SHARED_CACHE") == "1") and "test" not in sys.argv:
+if (TANDEM_DEPLOYMENT or os.getenv("REDIS_URL") or os.getenv("TANDEM_SHARED_CACHE") == "1") and "test" not in sys.argv:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL,
-        "OPTIONS": {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else {}}}
+        "OPTIONS": {"socket_connect_timeout":2,"socket_timeout":2,**({"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else {})}}}
 
 # We deliberately do NOT ask browsers to preload HSTS for a throwaway demo domain (check --deploy warning W021).
 SILENCED_SYSTEM_CHECKS = ["security.W021"]
+
+# Keep broker operations bounded without globally redelivering non-idempotent tasks.
+CELERY_BROKER_CONNECTION_TIMEOUT = 3
+CELERY_BROKER_TRANSPORT_OPTIONS = {'socket_connect_timeout':3,'socket_timeout':3}
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULER = 'tandem.beat:SingletonScheduler'
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+CELERY_WORKER_LOG_COLOR = False
+LOGGING = {
+    'version':1,'disable_existing_loggers':False,
+    'formatters':{'safe_json':{'()':'tandem.observability.SafeJSONFormatter'}},
+    'handlers':{'console':{'class':'logging.StreamHandler','formatter':'safe_json'}},
+    'root':{'handlers':['console'],'level':os.getenv('LOG_LEVEL','INFO')},
+    'loggers':{'django':{'handlers':['console'],'level':'INFO','propagate':False},
+               'celery.app.trace':{'level':'WARNING'}},
+}
+
+TEST_RUNNER = 'tandem.test_runner.CleanConnectionRunner'

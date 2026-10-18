@@ -21,6 +21,8 @@ def verify_request(request, expected_tag):
     signature = request.headers.get("Signature", "")
     if not value or not signature:
         return VerifyResult(False, "signature_missing")
+    if len(value)>4096 or len(signature)>2048:
+        return VerifyResult(False, "signature_invalid")
     try:
         label, params = value.split("=", 1)
         fields = {}
@@ -35,6 +37,8 @@ def verify_request(request, expected_tag):
         now = int(time.time())
         if created > now + 30 or now >= expires or not 0 < expires-created <= signing.MAX_WINDOW_S:
             return reject("expired")
+        if len(keyid)>64 or len(nonce)>128:
+            return reject("signature_invalid")
         if not claim(keyid, nonce, expires-now):
             return reject("nonce_replayed")
         if keyid != signing.KEY_ID:

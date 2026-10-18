@@ -18,7 +18,7 @@ class ConcurrentEventLogTests(TransactionTestCase):
                 for index in range(12):
                     log_event("test.concurrent", actor="test", payload={"writer": writer, "index": index})
             finally:
-                close_old_connections()
+                connection.close()
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(append, range(4)))

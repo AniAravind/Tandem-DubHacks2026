@@ -22,7 +22,8 @@ import secrets
 import uuid
 import re
 from datetime import timedelta
-from django.db import transaction
+from django.db import transaction, connection
+import hashlib
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from merchant.models import Listing, Quote, MerchantBooking, SignedRequest
@@ -31,7 +32,7 @@ from merchant.verify import verify_request
 
 def failure(code, status=400):
     return JsonResponse({"error": {"code": code, "message": code.replace("_", " "),
-                                   "request_id": "req_" + uuid.uuid4().hex}}, status=status)
+                                   "request_id": __import__("tandem.observability", fromlist=["request_id"]).request_id.get() or "req_" + uuid.uuid4().hex}}, status=status)
 
 
 def endpoint(action, method, tag):
@@ -48,28 +49,39 @@ def endpoint(action, method, tag):
         signature_input = request.headers.get("Signature-Input", "")
         def integer_parameter(name):
             found = re.search(rf";{name}=(\d+)", signature_input)
-            return int(found.group(1)) if found else 0
-        SignedRequest.objects.create(purpose="checkout" if "checkout" in request.path else "cancel" if "cancel" in request.path else "browse",
+            value = int(found.group(1)) if found else 0
+            return value if 0 <= value <= 2**63-1 else 0
+        audit = SignedRequest.objects.create(purpose="checkout" if "checkout" in request.path else "cancel" if "cancel" in request.path else "browse",
             method=request.method, authority=request.get_host(), path=request.path,
             keyid=verified.keyid[:64], nonce=verified.nonce[:128], created=integer_parameter("created"),
             expires=integer_parameter("expires"), tag=tag, content_digest=request.headers.get("Content-Digest", "")[:128],
-            signature_b64=request.headers.get("Signature", ""), verified=verified.ok,
+            signature_b64=request.headers.get("Signature", "")[:2048], verified=verified.ok,
             response_code=None if verified.ok else 401, reject_reason=verified.reason)
+        def finish(response):
+            audit.response_code = response.status_code
+            audit.save(update_fields=['response_code','updated_at'])
+            return response
         if not verified.ok:
             return failure(verified.reason, 401)
         try:
             data = json.loads(request.body or b"{}") if method == "POST" else request.GET
             if not hasattr(data, "get"):
-                return failure("invalid_request")
+                return finish(failure("invalid_request"))
             with transaction.atomic():
-                return action(slug, data, request)
+                return finish(action(slug, data, request))
         except (ValueError, TypeError, KeyError):
-            return failure("invalid_request")
+            return finish(failure("invalid_request"))
     return view
 
 
+def positive_integer(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int)) or not re.fullmatch(r'[0-9]+', str(value)):
+        raise ValueError('expected integer')
+    return int(value)
+
+
 def listing_action(slug, data, request):
-    guests = int(data.get("group_size", 1))
+    guests = positive_integer(data.get("group_size", 1))
     if guests < 1:
         return failure("invalid_request")
     rows = Listing.objects.filter(merchant__slug=slug, available=True, capacity__gte=guests)
@@ -82,7 +94,7 @@ def quote_action(slug, data, request):
     listing = Listing.objects.filter(merchant__slug=slug, ref=data.get("listing_ref"), available=True).first()
     if not listing:
         return failure("listing_not_found", 404)
-    guests = int(data.get("guests", 1))
+    guests = positive_integer(data.get("guests", 1))
     if not 1 <= guests <= listing.capacity:
         return failure("over_capacity", 409)
     from datetime import date
@@ -108,6 +120,15 @@ def checkout_action(slug, data, request):
     key = request.headers.get("Idempotency-Key")
     if not key or len(key) > 128:
         return failure("idempotency_key_required")
+    # Serialize the idempotency key before taking a quote lock. Distinct
+    # quotes sharing one key otherwise race the unique booking constraint.
+    if connection.vendor == 'postgresql':
+        lock_id = int.from_bytes(hashlib.sha256(('merchant.checkout:'+key).encode()).digest()[:8], 'big', signed=True)
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', [lock_id])
+    amount = data.get('amount_cents')
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+        return failure('invalid_request')
     quote = Quote.objects.select_for_update().filter(quote_id=data.get("quote_id"),
         listing__merchant__slug=slug, listing__ref=data.get("listing_ref")).select_related("listing").first()
     if not quote:
@@ -120,7 +141,7 @@ def checkout_action(slug, data, request):
     if quote.used or quote.expires_at <= timezone.now() or quote.amount_cents != data.get("amount_cents") or not quote.listing.available:
         return failure("quote_mismatch", 409)
     payment = data.get("payment")
-    if not isinstance(payment, dict) or not isinstance(payment.get("mandate_ids"), list) or not payment["mandate_ids"]:
+    if not isinstance(payment, dict) or not isinstance(payment.get("mandate_ids"), list) or not payment["mandate_ids"] or any(not isinstance(m, str) or not m.strip() or len(m)>128 for m in payment["mandate_ids"]):
         return failure("mandate_required", 409)
     booking = MerchantBooking.objects.create(listing=quote.listing, quote=quote,
         booking_ref=slug[:2].upper() + "-" + secrets.token_hex(4).upper(),
