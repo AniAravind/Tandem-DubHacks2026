@@ -54,7 +54,10 @@ def compare(member, args: dict) -> dict:
                 raise CompareError("stale_option", "That option belongs to an earlier request. Search again for the current goal.")
             rows.append(_catalog_row(option_json(option)))
     labels = args.get("offer_labels") or []
-    offers = live.latest(member.group, revision)
+    from chat.models import PhotonSession
+    from agent.private_actions import current_live_offers
+    session=PhotonSession.objects.filter(member=member).first()
+    offers = current_live_offers(member.group,session) if session else live.latest(member.group, revision)
     if labels:
         by_label = {o.label: o for o in offers}
         missing = [label for label in labels if label not in by_label]

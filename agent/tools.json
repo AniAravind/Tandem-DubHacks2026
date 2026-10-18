@@ -601,5 +601,46 @@
         }
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "present_recommendations",
+      "description": "Present a curated shortlist from retrieved live results, across relevant research components. Select at most 3 actual products, properties or providers that best answer this request. Prefer direct purchasing/provider pages over social posts, news, broad directories or generic guides. If results are poor, refine the search first. Never invent features, prices, availability, or URLs. Select a supporting passage by its zero-based index in that offer\u2019s evidence_choices. The server attaches that exact source text. Choose fewer than three if other results lack useful evidence of fit. Prefer passages about relevant capacity, location or features rather than boilerplate checkout policies. Never fill the shortlist just to reach three.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "selections"
+        ],
+        "properties": {
+          "selections": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "offer_id",
+                "evidence_index"
+              ],
+              "properties": {
+                "offer_id": {
+                  "type": "string",
+                  "maxLength": 36
+                },
+                "evidence_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 3,
+                  "description": "Index into this offer\u2019s evidence_choices array. Choose the passage that best shows why it fits; do not invent source text."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 ]

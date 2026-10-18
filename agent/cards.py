@@ -133,6 +133,21 @@ def live_offers_text(d: dict) -> str:
     return "\n".join(lines)
 
 
+def recommendations_text(data):
+    if not data.get('offers'):
+        return 'I couldn’t verify a useful match from those results. I need better sources before recommending one.'
+    lines=['I’d start with these:', '']
+    for row in data['offers']:
+        lines.append(f"{row['label']}. {row['title']}")
+        if row['evidence'] != row['title']:
+            lines.append(f"From the source: “{row['evidence']}”")
+        if row.get('price_cents') is not None:
+            lines.append(_listed(row)+' on '+row['source'])
+        lines += [row['url'],'']
+    lines.append('Listed prices and availability still need checking on the linked pages. Which one should I build the plan around?')
+    return '\n'.join(lines)
+
+
 def compare_card(d: dict) -> Card:
     return Card("CompareCard", {"rows": d["rows"], "cheapest_ref": d.get("cheapest_ref"),
                                 "budget_per_person_cents": d.get("budget_per_person_cents"), "note": d.get("note", "")})
@@ -177,7 +192,7 @@ def cards_for(tool: str, data: dict, labels: dict, tz: str) -> list[AgentMessage
         return [AgentMessage(text="", card=fallback_card(data))]
     if tool == "add_expense":
         return [AgentMessage(text="", card=expense_card(data))]
-    if tool == "live_search" and data.get("offers"):
+    if tool in {"live_search", "present_recommendations"} and data.get("offers"):
         return [AgentMessage(text="", card=live_offers_card(data))]
     if tool == "compare_options":
         return [AgentMessage(text="", card=compare_card(data))]

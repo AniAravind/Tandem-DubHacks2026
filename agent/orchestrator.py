@@ -32,7 +32,7 @@ SYSTEM_PROMPT = (pathlib.Path(__file__).parent / "prompts" / "system.md").read_t
 MAX_TOOL_CALLS = 4
 MAX_REPAIRS = 2
 PRIVATE_TOOLS = {"search_options", "publish_plan", "save_buying_brief", "publish_buying_plan", "live_search",
-                 "compare_options", "remember_preference"}
+                 "compare_options", "remember_preference", "present_recommendations"}
 MONEY_ADJACENT = {"create_purchase", "propose_fallback", "add_expense"}
 FAILURE_TEXT = "I'm having trouble thinking right now. Your holds and votes are safe. Try again in a moment."
 _LINK_CLAIM = re.compile(r"(?:here[’']?s|here is|(?:i(?:[’']ve| have)?|we(?:[’']ve| have)?) (?:sent|created|generated))[^.!?\n]{0,100}\b(?:link|invite)\b|\b(?:link|invite)\b[^.!?\n]{0,50}\b(?:ready|sent|created|generated)\b", re.I)
@@ -165,6 +165,8 @@ class Orchestrator:
                 return 'The budget is already explicitly confirmed in current_buying_brief. Do not ask to confirm it again. Apply the latest answer to conversation_context and call the relevant search/save tool, or ask only a different genuinely missing detail.'
             if question_type(text) == 'count' and brief.get('_buyer_count_confirmed'):
                 return 'The total buyer count is already confirmed in current_buying_brief. Preserve it and move to the next genuinely missing detail or execute the relevant search tool.'
+        if settings.PRIVATE_LIVE_ONLY and any(name == 'live_search' and data.get('offers') for name,data in self.tool_results) and not any(name == 'present_recommendations' for name,_ in self.tool_results):
+            return 'Select the useful retrieved results with present_recommendations before finishing. Choose at most three relevant actual options, selecting a valid evidence_choices index for each source. Refine poor research instead of dumping raw results. If no reliable matches exist, explain that plainly without recommending those hits.'
         if (_LINK_CLAIM.search(text) or re.search(r'https?://\S+/p/', text)) and not any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
             return 'No plan link has been created. Search actual options if needed, then call publish_plan. Never claim a link exists without successful publication.'
         if (re.search(r'search', text, re.I) and re.search(r'only you|only (?:one|1)|(?:one|1)[ -]?(?:active )?member', text, re.I)
@@ -219,6 +221,12 @@ class Orchestrator:
         if name == 'live_search' and not result.get('ok'):
             self.discovery_error = result.get('error')
         if result.get("ok"):
+            if name == 'live_search':
+                from chat.models import PhotonSession
+                session=PhotonSession.objects.filter(member__group=self.group).first()
+                if session and '_recommendation_ids' in session.planning_state:
+                    session.planning_state={key:value for key,value in session.planning_state.items() if key not in {'_recommendation_ids','_recommendation_revision'}}
+                    session.save(update_fields=['planning_state'])
             self.succeeded.add(signature)
         log_event(EventType.AGENT_TOOL_CALLED if hasattr(self.engine, "snapshot") else "agent.tool_result", actor="agent", group_id=self.group.id,
                   payload={"tool": name, "ok": bool(result.get("ok")),
@@ -259,10 +267,10 @@ class Orchestrator:
         from chat.models import PhotonSession
         tools = TOOLS
         if PhotonSession.objects.filter(member__group=self.group).exists():
-            allowed = PRIVATE_TOOLS - {'search_options','publish_plan'} if settings.PRIVATE_LIVE_ONLY else PRIVATE_TOOLS
+            allowed = PRIVATE_TOOLS - {'search_options','publish_plan'} if settings.PRIVATE_LIVE_ONLY else PRIVATE_TOOLS - {'present_recommendations'}
             tools = [tool for tool in TOOLS if tool['function']['name'] in allowed]
         else:
-            tools = [tool for tool in TOOLS if tool['function']['name'] != 'remember_preference']
+            tools = [tool for tool in TOOLS if tool['function']['name'] not in {'remember_preference','present_recommendations'}]
         for attempt in range(2):                                    # one retry on timeout / API error
             try:
                 return self.llm_chat(messages, tools, **kw)
@@ -374,6 +382,8 @@ class Orchestrator:
                         repairs += 1
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
             this_round = self.tool_results[round_start:]
+            if any(name == 'present_recommendations' for name,_ in this_round):
+                break  # The explicit presentation action completes this reply; research alone does not.
             if private and self.discovery_error and self.discovery_error.get('code') in {'live_search_unavailable','live_search_quota','rate_limited'} and not any(name == 'live_search' for name, _ in self.tool_results):
                 return [AgentMessage(text='I couldn’t retrieve real listings for that request. ' + self.discovery_error.get('message','Please try again shortly.'))]
             if private and any(name == 'live_search' for name, _ in this_round) and calls < MAX_TOOL_CALLS:
@@ -439,18 +449,27 @@ class Orchestrator:
         if self.link_request_actor and any(name in {'search_options','save_buying_brief'} for name, data in self.tool_results):
             self.publish_requested_proposal()
         presenting = [(name, data) for name, data in self.tool_results
-                      if name in {'search_options', 'live_search', 'compare_options'}]
-        if any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results) and not any(name == 'live_search' for name, data in presenting):
+                      if name in {'search_options', 'live_search', 'compare_options', 'present_recommendations'}]
+        if any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results) and not any(name in {'live_search','present_recommendations'} for name, data in presenting):
             # Sharing instructions and organizer credentials belong to the
             # server-generated private attachment, never model narration.
             text = None
+        elif any(name == 'present_recommendations' for name, _ in presenting):
+            curated = next(data for name,data in reversed(presenting) if name == 'present_recommendations')
+            text = cards.recommendations_text(curated)
         elif presenting and presenting[-1][0] == 'compare_options':
             text = cards.compare_text(presenting[-1][1])
         elif presenting and presenting[-1][0] == 'live_search':
             batches = [data for name,data in presenting if name == 'live_search']
+            from chat.models import PhotonSession
+            if settings.PRIVATE_LIVE_ONLY and PhotonSession.objects.filter(member__group=self.group).exists():
+                # An incomplete selection must not turn into a dump of unreviewed search hits.
+                text = 'I found some pages, but I haven’t narrowed them down to a reliable shortlist yet. I need to refine the search before recommending one.'
+                batches = []
             # Render retrieved titles, prices and URLs directly: free-form model
             # narration can attach a real price or URL to an invented product.
-            text = '\n\n'.join((data.get('query','Research')+'\n\n' if len(batches)>1 else '')+cards.live_offers_text(data) for data in batches)
+            if batches:
+                text = '\n\n'.join(cards.live_offers_text(data) for data in batches)
             if len(batches)>1:
                 text += '\n\nTo choose from an earlier section, tell me the type and title, such as the hotel name. A letter alone selects from the latest search.'
         elif any(name == 'search_options' for name, data in self.tool_results):
@@ -463,6 +482,7 @@ class Orchestrator:
             text = self.private_next_step()
         text = self.safe(text) if text else text
         labels = {o["id"]: o["title"] for name, d in self.tool_results if name == "search_options" for o in d.get("options", [])}
+        from chat.models import PhotonSession
         presentation = []
         for name, data in self.tool_results:
             d = dict(data)
@@ -485,6 +505,8 @@ class Orchestrator:
                         choices.append({**choice, "per_person_cents": (option.meta or {}).get("per_person_cents", 0) if option else 0})
                     d["choices"] = choices
             presentation.append((name, d))
+        if any(name == 'present_recommendations' for name,_ in presentation) or (settings.PRIVATE_LIVE_ONLY and PhotonSession.objects.filter(member__group=self.group).exists()):
+            presentation = [(name,d) for name,d in presentation if name != 'live_search']
         attached = [m for name, d in presentation for m in cards.cards_for(name, d, labels, self.group.timezone)]
         for name, data in self.tool_results:
             if name in {'publish_plan','publish_buying_plan'}:

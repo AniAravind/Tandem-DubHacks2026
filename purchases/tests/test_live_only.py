@@ -49,7 +49,9 @@ class LiveOnlyTests(TestCase):
             result=self.engine.execute('live_search',{'query':'cabin for four','kind':'stay','group_size':4},self.actor)
         self.assertTrue(result['ok'],result)
         orchestrator=Orchestrator(self.source.id)
-        orchestrator.tool_results=[('live_search',result['data'])]
+        selected=self.engine.execute('present_recommendations',{'selections':[{'offer_id':result['data']['offers'][0]['offer_id'],'evidence_index':1}]},self.actor)
+        self.assertTrue(selected['ok'],selected)
+        orchestrator.tool_results=[('live_search',result['data']),('present_recommendations',selected['data'])]
         out=orchestrator.compose(None)
         self.assertIn('https://www.vrbo.com/2023227312345678ha',out[0].text)
         self.assertNotIn('Juniper',out[0].text)
@@ -69,3 +71,58 @@ class LiveOnlyTests(TestCase):
         self.assertIsNone(self.plan.selected_option_id)
         self.assertNotIn('price_source',self.plan.details)
         self.assertFalse(result['data']['checkout_ready'])
+
+    def test_selection_rejects_invented_features_and_unknown_sources(self):
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            result=self.engine.execute('live_search',{'query':'cabin','kind':'stay','group_size':4},self.actor)
+        offer=result['data']['offers'][0]
+        args={'selections':[{'offer_id':offer['offer_id'],'evidence_index':1,'evidence':'Invented private helicopter'}]}
+        self.assertEqual(self.engine.execute('present_recommendations',args,self.actor)['error']['code'],'invalid_arguments')
+        args['selections'][0]={'offer_id':'00000000-0000-0000-0000-000000000000','evidence_index':1}
+        self.assertEqual(self.engine.execute('present_recommendations',args,self.actor)['error']['code'],'unknown_offer')
+        args['selections'][0]={'offer_id':offer['offer_id'],'evidence_index':1}
+        args['summary']='This costs $60 total.'
+        self.assertEqual(self.engine.execute('present_recommendations',args,self.actor)['error']['code'],'invalid_arguments')
+
+    def test_curated_letters_select_the_exact_source_across_searches(self):
+        from chat.models import PhotonSession
+        from agent.private_actions import current_live_offers
+        from purchases import live
+        from chat.models import ChatMessage
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=3,text_redacted='A cabin for 4 people, $200 each')
+        self.assertTrue(self.engine.execute('save_buying_brief',{'goal':'Cabin trip','category':'rental','group_size':4,'budget_per_person':200},self.actor)['ok'])
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            first=self.engine.execute('live_search',{'query':'cabin','kind':'stay','group_size':4},self.actor)
+            second=self.engine.execute('live_search',{'query':'hiking provider','kind':'activity','group_size':4},self.actor)
+        selected=self.engine.execute('present_recommendations',{'selections':[{'offer_id':first['data']['offers'][0]['offer_id'],'evidence_index':1},
+                          {'offer_id':second['data']['offers'][1]['offer_id'],'evidence_index':1}]},self.actor)
+        self.assertTrue(selected['ok'],selected)
+        session=PhotonSession.objects.get(member=self.owner)
+        self.assertEqual(str(current_live_offers(self.source,session)[0].id),first['data']['offers'][0]['offer_id'])
+        compared=self.engine.execute('compare_options',{'offer_labels':['A','B']},self.actor)
+        self.assertTrue(compared['ok'],compared)
+        self.assertEqual([row['id'] for row in compared['data']['rows']],[first['data']['offers'][0]['offer_id'],second['data']['offers'][1]['offer_id']])
+        out=Orchestrator(self.source.id,llm_chat=lambda *args,**kw: self.fail('Selection should use the saved shortlist')).run(self.actor,text='A')
+        plan=TripPlan.objects.get(pk=next(m.link for m in out if m.link).split('/p/')[1].split('?')[0])
+        self.assertEqual(plan.details['featured_offer_id'],first['data']['offers'][0]['offer_id'])
+
+    def test_curated_reply_is_one_shortlist_and_does_not_request_more_narration(self):
+        from agent.tests.helpers import reply,tool_call
+        import json
+        calls=[]
+        def model(messages,tools,**kwargs):
+            calls.append(1)
+            if len(calls)==1:
+                return reply(calls=[tool_call('live_search',{'query':'internal search query','kind':'stay','group_size':4})])
+            if len(calls)==2:
+                result=json.loads(next(m['content'] for m in reversed(messages) if m['role']=='tool'))
+                return reply(calls=[tool_call('present_recommendations',{'selections':[{'offer_id':result['data']['offers'][0]['offer_id'],'evidence_index':1}]})])
+            self.fail('A completed presentation does not need another AI call')
+        with patch.dict(os.environ,{'TAVILY_API_KEY':'test'}),patch('purchases.live.httpx',FakeTavily()):
+            out=Orchestrator(self.source.id,llm_chat=model).run(self.actor,text='Find cabins')
+        self.assertEqual(len(calls),2)
+        self.assertIn('Sleeps 6.',out[0].text)
+        self.assertNotIn('internal search query',out[0].text)
+        self.assertNotIn('Tahoe cabins guide',out[0].text)
+        self.assertEqual(out[0].text.count('Listed prices and availability'),1)
+        self.assertEqual(sum(m.card is not None for m in out),1)

@@ -15,7 +15,16 @@ def current_options(group, session):
 
 def current_live_offers(group, session):
     from purchases import live
+    from purchases.models import LiveOffer
     brief = session.planning_state
+    if '_recommendation_ids' in brief and brief.get('_recommendation_revision') == brief.get('revision'):
+        rows = {str(o.id):o for o in LiveOffer.objects.filter(group=group, id__in=brief['_recommendation_ids'])}
+        selected=[]
+        for key in brief['_recommendation_ids']:
+            if key in rows:
+                rows[key].label=chr(65+len(selected))
+                selected.append(rows[key])
+        return selected
     return live.latest(group, brief.get('revision') if brief else None)
 
 
@@ -46,7 +55,10 @@ def _feature_live_offer(orchestrator, actor, label, offers):
     offer = next((o for o in offers if o.label == label), None)
     if offer is None:
         return [AgentMessage(text='That letter isn’t in the current web results. Pick ' + ', '.join(o.label for o in offers) + '.')]
-    result = orchestrator.run_tool('publish_buying_plan', json.dumps({'featured_offer': label}), actor)
+    from chat.models import PhotonSession
+    session=PhotonSession.objects.get(member__group=orchestrator.group)
+    choice={'featured_offer_id':str(offer.id)} if session.planning_state.get('_recommendation_ids') else {'featured_offer':label}
+    result = orchestrator.run_tool('publish_buying_plan', json.dumps(choice), actor)
     if result.get('ok'):
         return orchestrator.compose(None)
     return [AgentMessage(text='I couldn’t make the planning page yet: ' + result['error']['message'])]

@@ -8,7 +8,7 @@ class M1Test(SimpleTestCase):
     def test_only_allowed_tools_and_no_direct_money_tool(self):
         self.assertEqual(orchestrator.TOOL_NAMES, {"search_options", "start_vote", "create_purchase", "check_status",
                                                                "propose_fallback", "add_expense", "publish_plan", "save_buying_brief", "publish_buying_plan",
-                                                               "live_search", "compare_options", "remember_preference"})
+                                                               "live_search", "compare_options", "remember_preference", "present_recommendations"})
 
     def test_fake_engine_until_rules_engine_lands(self):
         engine = orchestrator.get_engine()

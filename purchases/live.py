@@ -252,9 +252,19 @@ def sanitize_offer(data):
     return data
 
 
+def evidence_choices(title, snippet):
+    choices=[title]
+    for sentence in re.split(r'(?<=[.!?])\s+', snippet or ''):
+        if sentence and sentence not in choices:
+            choices.append(sentence if len(sentence)<=180 else sentence[:180].rsplit(' ',1)[0]+'…')
+        if len(choices)==4:
+            break
+    return choices
+
+
 def offer_json(o: LiveOffer, budget_cents: int | None = None) -> dict:
     return sanitize_offer({"offer_id": str(o.id), "label": o.label, "kind": o.kind, "title": o.title, "url": o.url, "source": o.source,
-            "snippet": o.snippet, "price_cents": o.price_cents, "price_unit": o.price_unit or None,
+            "snippet": o.snippet, "evidence_choices":evidence_choices(o.title,o.snippet), "price_cents": o.price_cents, "price_unit": o.price_unit or None,
             "price_text": o.price_text or None, "est_per_person_cents": o.est_per_person_cents,
             "fits_budget": (o.est_per_person_cents <= budget_cents) if o.kind != 'flight' and budget_cents is not None and o.est_per_person_cents is not None else None,
             "price_note": "Advertised fare only. Dates, passenger coverage, baggage and round-trip pricing are not verified." if o.kind == 'flight' else None,

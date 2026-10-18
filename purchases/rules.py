@@ -790,6 +790,7 @@ class RulesEngine:
             "create_purchase": self._create_purchase, "check_status": self._check_status,
             "propose_fallback": self._propose_fallback, "add_expense": self._add_expense,
             "live_search": self._live_search, "compare_options": self._compare_options,
+            "present_recommendations": self._present_recommendations,
             "remember_preference": self._remember_preference}
 
     def execute(self, tool: str, args: dict, actor: str) -> dict:
@@ -979,6 +980,10 @@ class RulesEngine:
             return live.search(member, args, session.planning_state if session else None)
         except live.LiveSearchError as e:
             raise RuleError(e.code, e.message)
+
+    def _present_recommendations(self, member, args):
+        from purchases.recommendations import present
+        return present(member,args)
 
     def _compare_options(self, member, args):
         from purchases.plans import private_planner
