@@ -12,6 +12,5 @@ export default function LandingPage() {
     <main id="main">
       <PhoneStory />
     </main>
-    <footer className="landing-footer">Demo build · payments are simulated</footer>
   </div>;
 }
