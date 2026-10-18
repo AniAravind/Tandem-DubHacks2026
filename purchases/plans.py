@@ -6,6 +6,7 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 from django.conf import settings
+from purchases.payment_mode import payments_label, payments_mode
 from django.core import signing
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -57,8 +58,64 @@ def open_payments(plan):
         raise ApiError(result['error']['code'], result['error']['message'], 409)
 
 
+def plan_price(plan):
+    """Total for a plan planned in iMessage without a catalog quote, or None.
+
+    1. The organizer's chosen live web result, when its own page listed a usable price.
+    2. Otherwise the confirmed budget per buyer times the number of buyers.
+    Returns (total_cents, source) where source is shown to people so the number is never a mystery.
+    """
+    details, n = plan.details or {}, max(1, plan.expected_members)
+    offers = details.get('live_offers') or []
+    chosen = next((o for o in offers if details.get('featured_offer_id') and o.get('offer_id') == details['featured_offer_id']), None) \
+        or next((o for o in offers if details.get('featured_offer') and o.get('label') == details['featured_offer']), None)
+    if chosen:
+        each, listed, unit = chosen.get('est_per_person_cents'), chosen.get('price_cents'), chosen.get('price_unit')
+        source = f"{chosen.get('price_text') or 'listed price'} on {chosen.get('source')}"
+        if unit == 'night' and isinstance(listed, int) and listed > 0 and isinstance(each, int) and each > 0:
+            nights = max(1, round(each * n / listed))                       # the search already knew the dates
+            return listed * nights, f"{chosen.get('price_text')} × {nights} night{'s' if nights != 1 else ''} on {chosen.get('source')}"
+        if isinstance(each, int) and each > 0:
+            return each * n, source
+        if isinstance(listed, int) and listed > 0 and unit in ('person', 'each'):
+            return listed * n, source
+        if isinstance(listed, int) and listed > 0 and unit == 'listed' and details.get('category') != 'rental':
+            return listed, source
+    budget = details.get('budget_per_person_cents')
+    if isinstance(budget, int) and budget > 0:
+        return budget * n, f"your ${budget // 100:,} per-person budget × {n}"
+    return None
+
+
+def auto_price(plan):
+    """Attach a priced option to a planning-only plan so its shares appear before anyone pays. Safe to repeat."""
+    if Purchase.objects.filter(group=plan.group).exists():
+        return False
+    price = plan_price(plan)
+    if not price:
+        return False
+    total, source = price
+    if plan.selected_option_id and plan.details.get('payment_simulation'):
+        if plan.selected_option.total_cents != total:                 # the organizer picked a different web result
+            from merchant.models import Listing
+            Option.objects.filter(pk=plan.selected_option_id).update(total_cents=total)
+            Listing.objects.filter(merchant__slug='tandem-payment-demo', ref=str(plan.id)).update(total_cents=total)
+        plan.details = {**plan.details, 'price_source': source}
+        plan.save(update_fields=['details', 'updated_at'])
+        return True
+    if plan.selected_option_id:
+        return False                                                   # already a real catalog quote
+    try:
+        prepare_simulation(plan, total)
+    except ApiError:
+        return False                                                   # outside the demo limits: stay planning-only
+    plan.details = {**plan.details, 'price_source': source}
+    plan.save(update_fields=['details', 'updated_at'])
+    return True
+
+
 def prepare_simulation(plan, total):
-    if not settings.DEMO_MODE or settings.PAYMENTS_GATEWAY != 'simulated':
+    if not settings.DEMO_MODE or settings.PAYMENTS_GATEWAY not in ('simulated', 'visa_sandbox'):
         raise ApiError('simulation_unavailable', 'Payment simulation is not enabled.', 409)
     if isinstance(total, bool) or not isinstance(total, int) or not plan.expected_members <= total <= min(1000000, plan.expected_members * 200000):
         raise ApiError('invalid_demo_total', 'Enter a demo total of at least one cent per buyer, up to $2,000 per buyer and $10,000 total.')
@@ -157,7 +214,8 @@ def payload(plan, request):
             'expires_at': iso(expires_at(plan)), 'expired': not purchase and timezone.now() >= expires_at(plan),
             'checkout_ready': bool(option and plan.vote_id), 'category': option.category if option else plan.details.get('category', 'purchase'),
             'details': {**plan.details, 'live_offers':[sanitize_offer(o) for o in plan.details.get('live_offers',[])]}, 'payment_simulation': bool(plan.details.get('payment_simulation')),
-            'simulation_available': settings.DEMO_MODE and settings.PAYMENTS_GATEWAY == 'simulated',
+            'simulation_available': settings.DEMO_MODE and settings.PAYMENTS_GATEWAY in ('simulated', 'visa_sandbox'),
+            'price_source': plan.details.get('price_source'), 'payments_mode': payments_mode(), 'payments_label': payments_label(),
             'option': {'title': option.title, 'total_cents': option.total_cents, 'currency': option.currency,
                        'per_person_cents': -(-option.total_cents // plan.expected_members), 'features': option.features,
                        'photo_url': option.meta.get('photo_url'), 'check_in': option.meta.get('check_in'),

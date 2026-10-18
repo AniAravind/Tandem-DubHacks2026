@@ -100,6 +100,8 @@ def group_detail(request, gid):
         payload['plan'] = plan_payload(plan, request) if plan else None
         payload["current_member_id"] = str(member.id)
         payload["can_switch_member"] = settings.DEMO_MODE and member_id_from_request(request) is None
+    from purchases.payment_mode import payments_label, payments_mode
+    payload = {**payload, "payments_mode": payments_mode(), "payments_label": payments_label()}
     return Response(payload)
 
 

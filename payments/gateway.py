@@ -46,4 +46,10 @@ def get_gateway() -> VisaAgentGateway:
         # knows about holds and mandates the OTHER one created (it only adds and updates, never forgets).
         gateway.hydrate_from_db()
         return gateway
-    raise NotImplementedError("Only the simulated gateway exists in this build")
+    if settings.PAYMENTS_GATEWAY == "visa_sandbox":
+        from payments.visa_acceptance import VisaAcceptanceGateway
+        return VisaAcceptanceGateway.default()
+    raise NotImplementedError(f"Unknown PAYMENTS_GATEWAY {settings.PAYMENTS_GATEWAY!r}")
+
+
+from purchases.payment_mode import payments_label, payments_mode  # noqa: E402,F401  (re-export)

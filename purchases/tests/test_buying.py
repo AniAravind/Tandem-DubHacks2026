@@ -37,10 +37,24 @@ class BuyingTests(TestCase):
         o=Orchestrator(self.source.id)
         self.assertIsNone(o.check_output('Juniper Loft is $231.25 each and $925.00 total.')[1])
 
-    def test_arbitrary_solo_plan_has_no_fake_price_or_payments(self):
-        self.brief(goal='Choose a telescope',category='telescope',group_size=1)
+    def test_solo_plan_is_priced_from_the_confirmed_budget(self):
+        self.brief(goal='Choose a telescope',category='telescope',group_size=1)       # brief() confirms $30 per buyer
         result=self.engine.execute('publish_buying_plan',{},self.actor)
         self.assertTrue(result['ok'],result)
+        self.assertTrue(result['data']['checkout_ready'])
+        self.plan=TripPlan.objects.get(pk=result['data']['plan_id'])
+        preview=APIClient().get(f'/api/v1/plans/{self.plan.id}').json()
+        self.assertTrue(preview['checkout_ready'])
+        self.assertEqual(preview['option']['total_cents'],3000)
+        self.assertIn('$30 per-person budget', preview['price_source'])
+        self.assertEqual(self.engine.execute('publish_buying_plan',{},self.actor)['data']['plan_id'],str(self.plan.id))
+        self.assertEqual(TripPlan.objects.get(pk=self.plan.pk).selected_option.total_cents,3000)   # republish keeps one price
+
+    def test_plan_without_price_or_budget_stays_unpriced(self):
+        ChatMessage.objects.create(group=self.source, member=self.owner, direction='in', seq=2, text_redacted='Help me pick a telescope, just me')
+        result=self.engine.execute('save_buying_brief',{'goal':'Choose a telescope','category':'telescope','group_size':1},self.actor)
+        self.assertTrue(result['ok'],result)
+        result=self.engine.execute('publish_buying_plan',{},self.actor)
         self.plan=TripPlan.objects.get(pk=result['data']['plan_id'])
         self.path=f'/api/v1/plans/{self.plan.id}'
         self.owner_token=parse_qs(urlparse(owner_url(self.plan)).query)['owner'][0]
@@ -51,7 +65,6 @@ class BuyingTests(TestCase):
         self.assertEqual(self.owner_join(client).status_code,201)
         self.assertEqual(client.post(self.path+'/fund',{},format='json').json()['error']['code'],'quote_required')
         self.assertFalse(Purchase.objects.filter(group=self.plan.group).exists())
-        self.assertEqual(self.engine.execute('publish_buying_plan',{},self.actor)['data']['plan_id'],str(self.plan.id))
 
     def test_budget_and_recommendations_cannot_invent_prices(self):
         self.brief()

@@ -23,7 +23,9 @@ export type ConsentPayload = {
   can_never: string[];
   consent_text_version: string;
   consent_text_sha256: string;
-  simulated: true;
+  simulated: boolean;
+  payments_mode?: "visa_sandbox" | "simulated";
+  payments_label?: string;
   offers: { offer_id: string; merchant_id: string; description: string; percent_back: number }[];
   share_id: string;
   group_id: string;

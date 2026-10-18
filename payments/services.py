@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from core.events import EventType, event_context, log_event
 from merchant.models import Merchant
+from purchases.payment_mode import payments_label, payments_mode
 from payments.consent_text import VERSION, can_lines, can_never_lines, format_deadline, format_usd, render
 from payments.gateway import get_gateway
 from payments.models import AgentToken, Consent, IdempotencyRecord
@@ -322,7 +323,8 @@ class ConsentService:
             "can_never": can_never_lines(cap_cents=selected_cap, deadline_label=deadline_label),
             "consent_text_version": VERSION,
             "consent_text_sha256": _hash_text(text),
-            "simulated": True,
+            "simulated": payments_mode() != "visa_sandbox",
+            "payments_mode": payments_mode(), "payments_label": payments_label(),
             "offers": offers,
             "share_id": str(share.id),
             "group_id": str(group.id),

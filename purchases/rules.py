@@ -119,7 +119,7 @@ def _post_group_update(purchase_id) -> None:
         "members": [{"id": str(s.member_id), "initials": s.member.display_name[:1].upper(),
                      "display_name": s.member.display_name, "status": s.status} for s in shares],
         "simulated": True}
-    _post(purchase.group_id, AgentMessage(text=f"{len(held)} of {len(shares)} held (simulated)", card=Card("FundingCard", data)))
+    _post(purchase.group_id, AgentMessage(text=f"{len(held)} of {len(shares)} held", card=Card("FundingCard", data)))
 
 
 # --------------------------------------------------------------------------------------
@@ -243,7 +243,7 @@ def checkout(purchase_id) -> dict:
                 return _compensate(gateway, client, purchase, booking, shares, reason=e.code)
 
         _post(purchase.group_id, AgentMessage(
-            text=f"Booked! Reference {booking.merchant_booking_ref} (simulated payments).",
+            text=f"Booked! Reference {booking.merchant_booking_ref}.",
             card=Card("BookingConfirmed", {
                 "title": option.title, "dates": _dates_label(quote.get("check_in"), quote.get("check_out")),
                 "booking_ref": booking.merchant_booking_ref, "per_person_cents": consensus.ceil_div(purchase.total_cents, len(shares)),
@@ -306,7 +306,7 @@ def _compensate(gateway, client, purchase: Purchase, booking: Booking, shares: l
     transition_purchase(purchase.id, P.CANCELLED, actor="rules", reason=reason)
     transition_purchase(purchase.id, P.REFUNDED, actor="rules", reason=reason)
     _post(purchase.group_id, AgentMessage(text="The booking could not be completed, so it was cancelled and "
-                                               "everyone was refunded (simulated)."))
+                                               "everyone was refunded."))
     return {"status": "compensated", "reason": reason}
 
 # --------------------------------------------------------------------------------------
@@ -684,7 +684,8 @@ def apply_share_change(share_id, consent_id) -> dict:
                     if resp["status"] != "AUTHORIZED":
                         raise RuleError(resp.get("reason", "hold_rejected"), "The bank would not change the hold.")
                     old_hold.share, old_hold.amount_cents = share, share.amount_cents          # the hold follows the member
-                    old_hold.save(update_fields=["share", "amount_cents", "updated_at"])
+                    old_hold.gateway_hold_id = resp.get("hold_id") or old_hold.gateway_hold_id    # Visa re-authorizes: new id
+                    old_hold.save(update_fields=["share", "amount_cents", "gateway_hold_id", "updated_at"])
                     old_hold.mandate.share = share
                     old_hold.mandate.save(update_fields=["share", "updated_at"])
                     if share.status != S.VIEWING:
@@ -766,7 +767,7 @@ def _send_consent_links(shares: list) -> int:
         purchase = share.purchase
         text = (f"Your share for {purchase.option.title}: {ser.money(share.amount_cents)}. "
                 f"Hold it by {_when(purchase.deadline_at, purchase.group.timezone)}. "
-                "It's a hold, not a charge, and you can say no on the page. (Payments are simulated.)")
+                "It's a hold, not a charge, and you can say no on the page.")
         sent += _send_private(purchase.group_id, share.member_id, text, consent_link(share))
     return sent
 

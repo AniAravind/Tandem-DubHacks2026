@@ -92,4 +92,4 @@ def log_event_simulated(type: str, payload: dict):
     ctx = payload.pop("_ctx", {}) if isinstance(payload, dict) else {}
     ctx = ctx or _event_context.get()
     log_event(type, actor="gateway", group_id=ctx.get("group_id"), purchase_id=ctx.get("purchase_id"),
-              payload=payload, simulated=True)
+              payload=payload, simulated=bool(payload.get("simulated", True)) if isinstance(payload, dict) else True)

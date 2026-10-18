@@ -226,7 +226,7 @@ export default function ConsentPage() {
     <main className="consent-page">
       <header className="consent-header">
         <Link to="/" className="brand"><Mark /><span>tandem<span className="brand-period">.</span></span></Link>
-        <span className="payment-preview-note">Payment preview &middot; no real charges</span>
+        <span className="payment-preview-note">{data?.payments_mode === "visa_sandbox" ? "Visa sandbox · test mode" : "Payment preview · no real charges"}</span>
       </header>
 
       {screen === "loading" && (

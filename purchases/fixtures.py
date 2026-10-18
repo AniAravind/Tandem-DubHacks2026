@@ -8,6 +8,7 @@ FIXTURES = {
         "id": "8c1a...", "name": "Tahoe weekend", "channel": "web", "timezone": "America/Los_Angeles",
         "organizer_id": "a1...",
         "members": [{"id": "a1...", "display_name": "Maya", "role": "organizer", "status": "active", "verified": True}],
+        "payments_mode": "visa_sandbox", "payments_label": "Visa sandbox · test mode",   # or "simulated" / "simulated"
     },
     "my_preferences": {
         # Private to the member. Budget never leaves this endpoint and is never sent to the LLM.
