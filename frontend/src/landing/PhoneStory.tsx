@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import tandemMark from "../assets/tandem-mark.png";
 
 // A 3D phone rises off the table while a real iMessage thread with Tandem plays out as you scroll. Prices match the seeded
@@ -68,7 +67,7 @@ function Bubble({ msg, tail, delivered }: { msg: Msg; tail: boolean; delivered: 
   </div>;
 }
 
-export default function PhoneStory() {
+export default function PhoneStory({ onTryDemo }: { onTryDemo: () => void }) {
   const section = useRef<HTMLElement>(null);
   const tilt = useRef<HTMLDivElement>(null);
   const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -101,7 +100,7 @@ export default function PhoneStory() {
         <div className="ps-hero" style={{ opacity: 1 - ease((p - 0.06) / 0.06), transform: `translateY(${-ease((p - 0.06) / 0.06) * 14}px)` }}>
           <h1>Group plans, settled in a text.</h1>
           <p>Everyone pays only their share. Nobody fronts the money.</p>
-          <div className="ps-actions"><Link className="btn primary" to="/chat/demo">Try the live demo</Link></div>
+          <div className="ps-actions"><button className="btn primary" onClick={onTryDemo}>Try the live demo</button></div>
         </div>
         <div className="ps-caption" style={{ opacity: caption ? 1 : 0 }}>
           <div className="ps-progress" aria-hidden="true">{CAPTIONS.map(([at]) => <i key={at} className={p >= at ? "on" : ""} />)}</div>
@@ -136,7 +135,7 @@ export default function PhoneStory() {
                 </div>
                 <div className="ps-cta" style={{ opacity: outro, pointerEvents: outro > 0.5 ? "auto" : "none" }}>
                   <p>Your turn.</p>
-                  <Link className="ps-cta-btn" to="/chat/demo" tabIndex={outro > 0.5 ? 0 : -1}>Try the live demo</Link>
+                  <button className="ps-cta-btn" onClick={onTryDemo} tabIndex={outro > 0.5 ? 0 : -1}>Try the live demo</button>
                   <small>Demo data · payments are simulated</small>
                 </div>
                 <span className="im-home" aria-hidden="true" />

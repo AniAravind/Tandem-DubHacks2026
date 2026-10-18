@@ -8,9 +8,9 @@ urlpatterns = [
     path("api/health", health),  # compatibility: readiness
     path("api/live", live),
     path("api/ready", health),
+    path("api/v1/", include("chat.urls")),             # register before generic demo/<action>
     path("api/v1/", include("purchases.urls")),        # groups, options, votes, purchases, shares, expenses, ledger, events, demo
     path("api/v1/", include("payments.urls")),         # consent/*
-    path("api/v1/", include("chat.urls")),             # chat/*
     path("merchants/", include("merchant.urls")),      # mock merchants + /.well-known keys
     path(".well-known/tandem-agent-keys", agent_keys),                   # public Ed25519 keys (simulated agent directory)
     re_path(r"^(?!api/|admin/|static/|merchants/|\.well-known/).*$", spa_index),  # React routes

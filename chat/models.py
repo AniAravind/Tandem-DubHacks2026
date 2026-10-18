@@ -27,3 +27,19 @@ class PhotonSession(models.Model):
 class PhotonReceipt(models.Model):
     external_id = models.CharField(max_length=64, primary_key=True)
     message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE)
+
+
+class PhotonRegistration(models.Model):
+    """Server-only routing data; onboarding tickets never authorize chat access."""
+    key = models.CharField(max_length=64, primary_key=True)
+    project_id = models.CharField(max_length=128)
+    phone_encrypted = models.TextField()
+    provider_user_id = models.CharField(max_length=128, blank=True)
+    destination = models.CharField(max_length=20, blank=True)
+    allocation = models.CharField(max_length=16, blank=True)
+    status = models.CharField(max_length=16, default="queued", db_index=True)
+    error_code = models.CharField(max_length=40, blank=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

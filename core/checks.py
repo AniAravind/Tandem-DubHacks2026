@@ -62,11 +62,12 @@ def deployment_problems():
             valid=False
         need(valid,code,f'{key} must be configured with a valid key before deployment.')
     need(not settings.DEMO_ADMIN_KEY or len(settings.DEMO_ADMIN_KEY)>=24, 'E017', 'Set a strong DEMO_ADMIN_KEY or leave demo controls disabled.')
-    photon=('SPECTRUM_PROJECT_ID','SPECTRUM_PROJECT_SECRET','PHOTON_BRIDGE_SECRET','PHOTON_TEST_PHONE')
-    if any(os.getenv(key) for key in photon):
+    photon=('SPECTRUM_PROJECT_ID','SPECTRUM_PROJECT_SECRET','PHOTON_BRIDGE_SECRET')
+    if any(os.getenv(key) for key in photon) or os.getenv('PHOTON_PUBLIC_REGISTRATION') == '1':
         need(all(os.getenv(key) for key in photon), 'E018', 'Configure all Photon bridge settings together, or disable the Photon process.')
         need(len(os.getenv('PHOTON_BRIDGE_SECRET',''))>=32, 'E019', 'PHOTON_BRIDGE_SECRET must contain at least 32 characters.')
-        need(bool(re.fullmatch(r'\+[1-9]\d{7,14}',os.getenv('PHOTON_TEST_PHONE',''))), 'E020', 'PHOTON_TEST_PHONE must use E.164 format.')
+        if os.getenv('PHOTON_TEST_PHONE'):
+            need(bool(re.fullmatch(r'\+[1-9]\d{7,14}',os.getenv('PHOTON_TEST_PHONE',''))), 'E020', 'PHOTON_TEST_PHONE must use E.164 format.')
     return problems
 
 

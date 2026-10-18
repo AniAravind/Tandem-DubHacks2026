@@ -1,6 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderMessage } from './photon-agent.mjs';
+import { renderMessage, acceptsInbound, fingerprint, deliverPending } from './photon-agent.mjs';
+
+test('inbound routing requires registered sender, direct iMessage and assigned route', () => {
+  const route = { sender: '+12065550123', destination: '+12065550999', allocation: 'shared' };
+  const space = { type: 'dm', phone: 'shared' };
+  const message = { direction: 'inbound', content: { type: 'text', text: 'hello' }, sender: { id: route.sender, service: 'iMessage' } };
+  assert.equal(acceptsInbound(route, space, message), true);
+  assert.equal(acceptsInbound(route, space, { ...message, sender: { id: '+12065550124' } }), false);
+  assert.equal(acceptsInbound(route, { ...space, type: 'group' }, message), false);
+  assert.equal(acceptsInbound(route, space, { ...message, direction: 'outbound' }), false);
+  assert.equal(acceptsInbound(route, space, { ...message, sender: { id: route.sender, service: 'SMS' } }), false);
+  assert.equal(acceptsInbound({ ...route, allocation: 'dedicated' }, space, message), false);
+  assert.equal(acceptsInbound({ ...route, allocation: 'dedicated' }, { ...space, phone: route.destination }, message), true);
+});
+
+test('route fingerprint is stable across ordering and changes when a number is added', () => {
+  const a = { sender: '+1', destination: '+2', allocation: 'shared' };
+  const b = { sender: '+3', destination: '+4', allocation: 'shared' };
+  assert.equal(fingerprint([a, b]), fingerprint([b, a]));
+  assert.notEqual(fingerprint([a]), fingerprint([a, b]));
+});
+
+test('outbound acknowledgement follows successful send and stays scoped to its sender', async () => {
+  const events = [];
+  const route = { sender: '+12065550123', destination: '+12065550999', allocation: 'shared' };
+  const backend = async data => { events.push(data); return { messages: [{ seq: 4, text: 'Your plan' }] }; };
+  const dm = { send: async text => events.push(text) };
+  await deliverPending(backend, route, dm);
+  assert.deepEqual(events, [{ sender: route.sender, route: 'shared', action: 'poll' }, 'Your plan',
+    { sender: route.sender, route: 'shared', action: 'ack', seq: 4 }]);
+  events.length = 0;
+  await assert.rejects(deliverPending(backend, route, { send: async () => { throw new Error('offline'); } }));
+  assert.equal(events.length, 1);
+});
 
 test('private consent URL stays in the individual reply', () => {
   assert.equal(renderMessage({ text: 'Your consent\nhttps://example.com/c/token' }), 'Your consent\nhttps://example.com/c/token');
