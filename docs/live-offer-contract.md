@@ -106,3 +106,11 @@ Republishing the same brief keeps the same URL and refreshes `live_offers`.
 | `XAI_MAX_OUTPUT_TOKENS` | 1500 | Cap on reasoning + reply for gpt-oss models (also sends `reasoning_effort=low`). |
 
 Migration `purchases/0004_liveoffer` runs in the Heroku release phase.
+
+## Flow testing
+
+- Offline (no AI quota): `python manage.py test agent.tests.test_journeys purchases.tests.test_live` covers topic changes,
+  stale choices, provider outages, repeated tool calls, live search, letter picks, comparisons, and preferences.
+- Real model: `python manage.py journey_check --journey topic` (or `gift`, `vague`; `--list` shows them). Each run makes
+  an isolated "Journey check …" private group and fails if a reply misses its expectation or says the AI is stuck.
+  Each turn costs about 3–6k AI tokens, so run one journey at a time on the free Groq tier.
