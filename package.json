@@ -1,8 +1,15 @@
 {
   "name": "tandem-root",
   "private": true,
-  "engines": { "node": "20.x" },
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
+    "photon": "node scripts/photon-agent.mjs",
+    "test:photon": "node --test scripts/photon-agent.test.mjs",
     "build": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
+  },
+  "dependencies": {
+    "spectrum-ts": "^12.11.0"
   }
 }
