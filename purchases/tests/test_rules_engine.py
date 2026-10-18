@@ -110,9 +110,9 @@ class ConsensusTests(EngineBase):
 class ValidationTests(EngineBase):
     def test_schema_rejections(self):
         bad_calls = [
-            ("search_options", {"category": "boats", "group_size": 6}),          # not in the allowed list
+            ("search_options", {"category": "", "group_size": 6}),          # empty category
             ("search_options", {"category": "rental"}),                           # group_size missing
-            ("search_options", {"category": "rental", "group_size": 1}),          # below the minimum
+            ("search_options", {"category": "rental", "group_size": 0}),          # below the minimum
             ("search_options", {"category": "rental", "group_size": 6, "price": 5}),   # field not allowed
             ("search_options", {"category": "rental", "group_size": True}),       # a bool is not an integer
             ("start_vote", {"option_ids": ["only-one"]}),

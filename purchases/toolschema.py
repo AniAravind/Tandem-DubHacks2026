@@ -57,6 +57,9 @@ def validate(schema: dict, value, path: str = "arguments") -> list[str]:
         if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
             problems.append(f"{path} must be greater than {schema['exclusiveMinimum']}")
 
+    if isinstance(value, str) and "minLength" in schema and len(value) < schema["minLength"]:
+        problems.append(f"{path} is shorter than {schema["minLength"]} characters")
+
     if isinstance(value, str) and "maxLength" in schema and len(value) > schema["maxLength"]:
         problems.append(f"{path} is longer than {schema['maxLength']} characters")
 

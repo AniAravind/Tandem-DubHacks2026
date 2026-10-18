@@ -71,26 +71,33 @@ class Orchestrator:
 
     def publish_requested_proposal(self, *, reuse_published=False):
         """Complete an explicit link request from real options, without invented IDs or members."""
-        if not self.link_request_actor or self.tool_attempts >= MAX_TOOL_CALLS or any(name == 'publish_plan' for name, data in self.tool_results):
+        if not self.link_request_actor or self.tool_attempts >= MAX_TOOL_CALLS or any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
             return False
         from purchases.serializers import latest_options_json
         from purchases.models import TripPlan
+        from chat.models import PhotonSession
+        session = PhotonSession.objects.filter(member__group=self.group).first()
+        brief = session.planning_state if session else {}
+        options = latest_options_json(self.group)['options']
+        if brief:
+            options = [o for o in options if o['meta'].get('brief_revision') == brief.get('revision')]
+            if not options:
+                return bool(self.run_tool('publish_buying_plan','{}',self.link_request_actor).get('ok'))
         existing = TripPlan.objects.filter(source_group=self.group).select_related('selected_option').order_by('-created_at').first() if reuse_published else None
         newest = Option.objects.filter(group=self.group).order_by('-created_at').first()
-        if existing and newest and newest.created_at <= existing.created_at:
+        if existing and existing.selected_option_id and newest and newest.created_at <= existing.created_at:
             source = Option.objects.filter(group=self.group, pk=existing.selected_option.meta.get('source_option_id')).first()
             if source:
                 result = self.run_tool('publish_plan', json.dumps({'option_id':str(source.id),'title':existing.title,'summary':existing.summary}), self.link_request_actor)
                 return bool(result.get('ok'))
-        options = latest_options_json(self.group)['options']
         if not options:
             return False
         option = options[0]
         meta = option['meta']
-        location = meta.get('location') or 'Group trip'
+        location = meta.get('location') or option['title']
         dates = ' to '.join(filter(None, [meta.get('check_in'), meta.get('check_out')]))
-        summary = (f"Proposed trip for {option['group_size']} people{(' · ' + dates) if dates else ''}. "
-                   f"Suggested place: {option['title']}. This is the top-ranked match from your search, "
+        summary = (f"Proposed purchase for {option['group_size']} buyer(s){(' · ' + dates) if dates else ''}. "
+                   f"Suggested option: {option['title']}. This is the top-ranked match from your search, "
                    "for everyone to review together. Joining accepts this proposed plan; each person separately approves their own exact payment share.")
         result = self.run_tool('publish_plan', json.dumps({'option_id':option['id'], 'title':f'{location} · group plan'[:120], 'summary':summary}), self.link_request_actor)
         return bool(result.get('ok'))
@@ -99,11 +106,15 @@ class Orchestrator:
         from chat.models import PhotonSession
         if not PhotonSession.objects.filter(member__group=self.group).exists():
             return None
-        if (_LINK_CLAIM.search(text) or re.search(r'https?://\S+/p/', text)) and not any(name == 'publish_plan' for name, data in self.tool_results):
+        if (_LINK_CLAIM.search(text) or re.search(r'https?://\S+/p/', text)) and not any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
             return 'No plan link has been created. Search actual options if needed, then call publish_plan. Never claim a link exists without successful publication.'
         if (re.search(r'search', text, re.I) and re.search(r'only you|only (?:one|1)|(?:one|1)[ -]?(?:active )?member', text, re.I)
                 and re.search(r'can[’\']?t|cannot|add (?:more|the other)', text, re.I)):
             return 'One private member is expected. Search for the user’s intended group size now; joining happens on the website after publication.'
+        _, reason = self.check_output(text)
+        if reason:
+            return ('Your last reply failed output validation ('+reason+'). Do not invent prices or claim payments happened. '
+                    'Only quote user-stated budgets or prices in current tool/planning_options data. Save the current buying brief and give price-free qualitative advice when no catalog offer exists. Ask one relevant missing-detail question rather than a generic menu.')
         return None
 
     # ------------------------------------------------------------------ id ownership (R1, re-checked by the engine)
@@ -152,7 +163,7 @@ class Orchestrator:
         from chat.models import PhotonSession
         tools = TOOLS
         if PhotonSession.objects.filter(member__group=self.group).exists():
-            tools = [tool for tool in TOOLS if tool['function']['name'] in {'search_options', 'publish_plan'}]
+            tools = [tool for tool in TOOLS if tool['function']['name'] in {'search_options', 'publish_plan','save_buying_brief','publish_buying_plan'}]
         for attempt in range(2):                                    # one retry on timeout / API error
             try:
                 return self.llm_chat(messages, tools, **kw)
@@ -190,7 +201,9 @@ class Orchestrator:
         return self.compose(reply_text) if reply_text else None
 
     def run(self, actor: str, event: dict | None = None, text: str = "") -> list[AgentMessage]:
-        if os.getenv("DEMO_SCRIPTED") == "1":
+        from chat.models import PhotonSession
+        private = PhotonSession.objects.filter(member__group=self.group).exists()
+        if os.getenv("DEMO_SCRIPTED") == "1" and not private:
             return self.run_scripted(actor, event, text) or [AgentMessage(text=safety.SAFE_TEXT_NO_TOOLS)]
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
         from chat.models import PhotonSession
@@ -216,7 +229,7 @@ class Orchestrator:
                     completed = self.compose(None)
                     if completed:
                         return completed
-                if settings.DEMO_MODE and not self.tool_results:     # Grok unreachable: the demo script is the backup
+                if settings.DEMO_MODE and not self.tool_results and not private:     # Grok unreachable: the demo script is the backup
                     scripted = self.run_scripted(actor, event, original_text)
                     if scripted:
                         return scripted
@@ -231,7 +244,7 @@ class Orchestrator:
                         messages.append({'role':'assistant','content':text})
                         messages.append({'role':'system','content':problem})
                         continue
-                    text = "I haven’t created a link yet. Tell me the trip destination, dates, group size, and rough budget; I can plan for everyone here before they join."
+                    text = self.private_next_step()
                 break
             messages.append({"role": "assistant", "content": msg.content or "",
                              "tool_calls": [{"id": tc.id, "type": "function",
@@ -252,27 +265,51 @@ class Orchestrator:
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
         return self.compose(text)
 
-    def safe(self, text: str) -> str:
+    def check_output(self, text):
         tool_cents = set().union(*(safety.cents_in(d) for _, d in self.tool_results)) if self.tool_results else set()
-        typed = set().union(*(safety.amounts_in(t) for t in ChatMessage.objects.filter(group=self.group, direction="in")
+        from chat.models import PhotonSession
+        session = PhotonSession.objects.filter(member__group=self.group).first()
+        parser = safety.planning_amounts_in if session else safety.amounts_in
+        typed = set().union(*(parser(t) for t in ChatMessage.objects.filter(group=self.group, direction="in")
                               .order_by("-seq").values_list("text_redacted", flat=True)[:50]))
+        if session:
+            from purchases.serializers import latest_options_json
+            for option in latest_options_json(self.group)['options']:
+                if not session.planning_state or option['meta'].get('brief_revision') == session.planning_state.get('revision'):
+                    tool_cents |= safety.cents_in({k:option[k] for k in ('total_cents','per_person_cents')})
         caps = {c for c in (m.budget_cap_cents for m in self.group.members.all()) if c is not None}
-        out, reason = safety.filter_text(text, tool_cents, typed, caps)
+        return safety.filter_text(text, tool_cents, typed, caps)
+
+    def private_next_step(self):
+        from chat.models import PhotonSession
+        session = PhotonSession.objects.filter(member__group=self.group).first()
+        brief = session.planning_state if session else {}
+        if brief:
+            if brief.get('budget_per_person_cents') is None:
+                return f"For {brief['goal']} with {brief['group_size']} buyer(s), what budget should I use per buyer?"
+            return f"I have {brief['goal']} for {brief['group_size']} buyer(s), with your {cards.usd(brief['budget_per_person_cents'])} per-buyer budget. I don’t have a verified offer yet; say ‘send me the link’ to open the planning page."
+        return "I haven’t created a buying plan yet. What are you buying, how many buyers, and what budget should I use? One buyer is fine."
+
+    def safe(self, text: str) -> str:
+        out, reason = self.check_output(text)
         if reason:
             log_event(EventType.AGENT_TOOL_REJECTED, actor="agent", group_id=self.group.id,
                       payload={"tool": "output", "reason": reason})
+            from chat.models import PhotonSession
+            if PhotonSession.objects.filter(member__group=self.group).exists():
+                return self.private_next_step()
             return safety.SAFE_TEXT if self.tool_results else safety.SAFE_TEXT_NO_TOOLS
         return out
 
     def compose(self, text: str | None) -> list[AgentMessage]:
-        if self.link_request_actor and any(name == 'search_options' for name, data in self.tool_results):
+        if self.link_request_actor and any(name in {'search_options','save_buying_brief'} for name, data in self.tool_results):
             self.publish_requested_proposal()
-        if any(name == 'publish_plan' for name, data in self.tool_results):
+        if any(name in {'publish_plan','publish_buying_plan'} for name, data in self.tool_results):
             # Sharing instructions and organizer credentials belong to the
             # server-generated private attachment, never model narration.
             text = None
         elif text and self.private_reply_problem(text):
-            text = "I haven’t created a link yet. I need to search and publish the proposed plan first."
+            text = self.private_next_step()
         text = self.safe(text) if text else text
         labels = {o["id"]: o["title"] for name, d in self.tool_results if name == "search_options" for o in d.get("options", [])}
         presentation = []
@@ -301,14 +338,17 @@ class Orchestrator:
             presentation.append((name, d))
         attached = [m for name, d in presentation for m in cards.cards_for(name, d, labels, self.group.timezone)]
         for name, data in self.tool_results:
-            if name == 'publish_plan':
+            if name in {'publish_plan','publish_buying_plan'}:
                 from purchases.models import TripPlan
                 from purchases.plans import owner_url
                 plan = TripPlan.objects.filter(pk=data.get('plan_id'), source_group=self.group).first()
                 if plan:
-                    attached.append(AgentMessage(text='Your trip plan is ready. Open your organizer link, join with your name and number, then copy the group invite from the page. Each person will approve their own payment there.',
+                    note = 'This is planning-only until a supported merchant offer is attached.' if not plan.selected_option_id else 'Each buyer approves their own payment on the website; payments are simulated.'
+                    attached.append(AgentMessage(text='Your buying plan is ready. Open your organizer link and join with your name and number. For a group, copy the group invite from the page. '+note,
                         link=owner_url(plan), private_to_member_id=str(self.group.organizer_id)))
         out = [AgentMessage(text=text)] if text else []
+        if not out and not attached and any(name=='save_buying_brief' for name,data in self.tool_results):
+            out = [AgentMessage(text=self.private_next_step())]
         public = [m for m in attached if not m.private_to_member_id]
         if out and len(public) == 1:                                # a single card rides on the text message
             out[0].card = public[0].card

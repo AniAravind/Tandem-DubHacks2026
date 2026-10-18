@@ -22,11 +22,12 @@ class Option(TimeStamped):
 class TripPlan(TimeStamped):
     source_group = models.ForeignKey(Group, on_delete=models.PROTECT, related_name="published_plans")
     group = models.OneToOneField(Group, on_delete=models.CASCADE, related_name="trip_plan")
-    selected_option = models.OneToOneField(Option, on_delete=models.PROTECT)
-    vote = models.OneToOneField("Vote", on_delete=models.PROTECT)
+    selected_option = models.OneToOneField(Option, on_delete=models.PROTECT, null=True, blank=True)
+    vote = models.OneToOneField("Vote", on_delete=models.PROTECT, null=True, blank=True)
     title = models.CharField(max_length=120)
     summary = models.TextField()
     expected_members = models.PositiveSmallIntegerField()
+    details = models.JSONField(default=dict, blank=True)
 
 
 class Vote(TimeStamped):
