@@ -213,8 +213,10 @@ def payload(plan, request):
     purchase = Purchase.objects.filter(group=plan.group).order_by('-created_at').first()
     option = purchase.option if purchase else plan.selected_option
     people = plan.group.members.filter(status='active')
+    share_statuses = dict(Share.objects.filter(purchase=purchase, superseded_by__isnull=True).values_list('member_id', 'status')) if purchase else {}
+    withdrawn = {mid for mid, status in share_statuses.items() if status in {'declined', 'released', 'refunded'}}
     data = {'id': str(plan.id), 'title': plan.title, 'summary': plan.summary, 'share_url': plan_url(plan),
-            'group_id': str(plan.group_id), 'expected_members': plan.expected_members, 'joined_count': people.count(),
+            'group_id': str(plan.group_id), 'expected_members': plan.expected_members, 'joined_count': people.exclude(id__in=withdrawn).count(),
             'expires_at': iso(expires_at(plan)), 'expired': not purchase and timezone.now() >= expires_at(plan),
             'checkout_ready': bool(option and plan.vote_id), 'category': option.category if option else plan.details.get('category', 'purchase'),
             'details': {**plan.details, 'live_offers':[sanitize_offer(o) for o in plan.details.get('live_offers',[])]}, 'payment_simulation': bool(plan.details.get('payment_simulation')),
@@ -227,7 +229,7 @@ def payload(plan, request):
                         'title':plan.title,'total_cents':None,'per_person_cents':None,'currency':'USD','features':plan.details.get('requirements',[]),
                         'photo_url':None,'check_in':None,'check_out':None,'cancellation':''},
             'me': {'id': str(member.id), 'display_name': member.display_name, 'organizer': plan.group.organizer_id == member.id} if member else None,
-            'members': [{'id': str(m.id), 'display_name': m.display_name} for m in people] if member else [],
+            'members': [{'id': str(m.id), 'display_name': m.display_name, 'share_status': share_statuses.get(m.id), 'left': m.id in withdrawn} for m in people] if member else [],
             'purchase': {'id': str(purchase.id), 'state': purchase.state, 'deadline_at': iso(purchase.deadline_at)} if purchase else None,
             'my_share': None}
     if member and purchase:

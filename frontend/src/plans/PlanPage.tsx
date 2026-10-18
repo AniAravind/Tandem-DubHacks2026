@@ -10,7 +10,7 @@ type Plan = {
  id:string; title:string; summary:string; share_url:string; group_id:string; expected_members:number; joined_count:number; expired:boolean;
  checkout_ready:boolean; payment_simulation:boolean; simulation_available:boolean; category:string; details:SavedDetails & {budget_per_person_cents?:number|null;recommendations?:string[]};
  option:{title:string;total_cents:number|null;per_person_cents:number|null;currency:string;features:string[];photo_url:string|null;check_in:string|null;check_out:string|null;cancellation:string};
- me:{id:string;display_name:string;organizer:boolean}|null; members:{id:string;display_name:string}[];
+ me:{id:string;display_name:string;organizer:boolean}|null; members:{id:string;display_name:string;share_status?:string;left?:boolean}[];
  purchase:{id:string;state:string;deadline_at:string}|null;
  my_share:{amount_cents:number;status:string;consent_url:string|null}|null;
 };
@@ -23,6 +23,7 @@ export default function PlanPage(){
  const [name,setName]=useState(''),[phone,setPhone]=useState(''),[accept,setAccept]=useState(false);
  const [demoTotal,setDemoTotal]=useState(''),[confirmSimulation,setConfirmSimulation]=useState(false);
  const paymentSetupAttempt=useRef<string|null>(null);
+ useEffect(()=>{if(plan?.simulation_available&&!plan.checkout_ready)setDemoTotal(value=>value||((plan.option.total_cents??((plan.details.budget_per_person_cents??10000)*plan.expected_members))/100).toFixed(2));},[plan?.id,plan?.simulation_available,plan?.checkout_ready,plan?.expected_members,plan?.details.budget_per_person_cents,plan?.option.total_cents]);
  useEffect(()=>{
   if(!plan?.me?.organizer||!plan.checkout_ready||plan.purchase||plan.expired||plan.joined_count!==plan.expected_members||paymentSetupAttempt.current===plan.id)return;
   paymentSetupAttempt.current=plan.id;
@@ -40,9 +41,10 @@ export default function PlanPage(){
  }catch(e){setError(e instanceof Error?e.message:'Could not join. Please try again.');}finally{setBusy(false);}}
  async function fund(simulate=false){setBusy(true);setError('');try{setPlan(await api.post<Plan>(`/plans/${planId}/fund`,simulate?{demo_total_cents:Math.round(Number(demoTotal)*100),confirm_simulation:confirmSimulation}:{}));}catch(e){setError(e instanceof Error?e.message:'Could not open payment collection.');}finally{setBusy(false);}}
  async function copy(){if(!plan)return;try{await navigator.clipboard.writeText(plan.share_url);setCopied(true);}catch{setError('Copy the group invite link shown below.');}}
- const total=plan?.checkout_ready?plan.option.total_cents:null;
+ const previewTotal=plan?.simulation_available&&!plan.checkout_ready&&Number(demoTotal)>0?Math.round(Number(demoTotal)*100):null;
+ const total=plan?.checkout_ready?plan.option.total_cents:previewTotal;
  const budget=plan?.details.budget_per_person_cents;
- const share=plan?.my_share?.amount_cents??(plan?.checkout_ready?plan.option.per_person_cents:null);
+ const share=plan?.my_share?.amount_cents??(plan?.checkout_ready?plan.option.per_person_cents:previewTotal!=null&&plan?Math.floor(previewTotal/plan.expected_members)+(plan.me?.organizer?previewTotal%plan.expected_members:0):null);
  return <div className="plan-page">
  <header className="plan-nav"><Link to="/" className="plan-brand"><Mark/>tandem<span>.</span></Link><span>Better plans, together.</span></header>
  <main id="workspace" className="plan-main">
@@ -50,9 +52,9 @@ export default function PlanPage(){
  <header className="plan-heading"><div><p className="eyebrow">YOUR SHARED PLAN</p><h1>{plan.title}</h1><p className="plan-subtitle">{plan.option.check_in?`${date(plan.option.check_in)}${plan.option.check_out?` - ${date(plan.option.check_out)}`:''}`:`${plan.expected_members} ${plan.expected_members===1?'person':'people'}`}</p></div><button className="btn primary" onClick={copy}>{copied?'Link copied':'Copy invite link'}<Icon name="arrow"/></button><span className="sr-only" role="status">{copied?'Invite link copied':''}</span></header>
  {error&&<div className="plan-error" role="alert">{error}<button aria-label="Dismiss error" onClick={()=>setError('')}>x</button></div>}
  <section className="plan-totals" aria-label="Plan totals">
- <div className="plan-total-primary"><span>{total!=null?'Current total':budget!=null?'Group budget':'Current total'}</span><strong className="money">{total!=null?usdExact(total):budget!=null?usdExact(budget*plan.expected_members):'Not set yet'}</strong><small>{total!=null?'Planned amount':budget!=null?'Budget - final price to be confirmed':'Waiting for a final price'}</small></div>
- <div><span>{share!=null?'Your share':'Per person'}</span><strong className="money">{share!=null?usdExact(share):budget!=null?usdExact(budget):'--'}</strong><small>{plan.my_share?shareLabels[plan.my_share.status]??plan.my_share.status:share!=null?'Estimated split':budget!=null?'Budget per person':'To be confirmed'}</small></div>
- <div><span>People joined</span><strong>{plan.joined_count}<em> / {plan.expected_members}</em></strong><small>{plan.joined_count===plan.expected_members?"Everyone's here":`${plan.expected_members-plan.joined_count} ${plan.expected_members-plan.joined_count===1?'place':'places'} remaining`}</small></div>
+ <div className="plan-total-primary"><span>{previewTotal!=null?'Preview total':total!=null?'Current total':budget!=null?'Group budget':'Current total'}</span><strong className="money">{total!=null?usdExact(total):budget!=null?usdExact(budget*plan.expected_members):'Not set yet'}</strong><small>{previewTotal!=null?'Demo amount — no real payment':total!=null?'Planned amount':budget!=null?'Budget - final price to be confirmed':'Waiting for a final price'}</small></div>
+ <div><span>{share!=null?'Your share':'Per person'}</span><strong className="money">{share!=null?usdExact(share):budget!=null?usdExact(budget):'--'}</strong><small>{plan.my_share?shareLabels[plan.my_share.status]??plan.my_share.status:previewTotal!=null?'Payment preview':share!=null?'Estimated split':budget!=null?'Budget per person':'To be confirmed'}</small></div>
+ <div><span>People joined</span><strong>{plan.joined_count}<em> / {plan.expected_members}</em></strong><small>{plan.purchase&&plan.joined_count<plan.expected_members?`${plan.expected_members-plan.joined_count} left the plan`:plan.joined_count===plan.expected_members?"Everyone's here":`${plan.expected_members-plan.joined_count} ${plan.expected_members-plan.joined_count===1?'place':'places'} remaining`}</small></div>
  </section>
  <div className="plan-layout"><section className="plan-panel plan-story"><div className="plan-section-title"><h2>The buying plan</h2><Icon name="grid"/></div>
  {plan.option.photo_url&&<img className="plan-photo" src={plan.option.photo_url} alt={plan.option.title}/>}
@@ -62,7 +64,7 @@ export default function PlanPage(){
  </section>
  <aside className="plan-side"><section className="plan-panel"><div className="plan-section-title"><h2>Who's joined</h2><span>{plan.joined_count}/{plan.expected_members}</span></div>
  <div className="plan-progress" role="progressbar" aria-label="People who have joined" aria-valuemin={0} aria-valuemax={plan.expected_members} aria-valuenow={plan.joined_count}><div style={{width:`${Math.min(100,100*plan.joined_count/plan.expected_members)}%`}}/></div>
- {plan.me?<ul className="plan-people">{plan.members.map(m=><li key={m.id}><span aria-hidden="true">{m.display_name.slice(0,1).toUpperCase()}</span><strong>{m.display_name}{m.id===plan.me?.id?' (you)':''}</strong><small>Joined</small></li>)}</ul>:<p className="fine">Join to see everyone in the plan.</p>}
+ {plan.me?<ul className="plan-people">{plan.members.map(m=><li key={m.id}><span aria-hidden="true">{m.display_name.slice(0,1).toUpperCase()}</span><strong>{m.display_name}{m.id===plan.me?.id?' (you)':''}</strong><small>{m.left?'Left':m.share_status?shareLabels[m.share_status]??m.share_status:'Joined'}</small></li>)}</ul>:<p className="fine">Join to see everyone in the plan.</p>}
  <details className="plan-extra"><summary>Invite link</summary><a className="plan-invite-url" href={plan.share_url}>{plan.share_url}</a></details></section>
  {!plan.me?<section className="plan-panel plan-join"><h2>Join the plan</h2><p>Your name and number. That's it.</p><form onSubmit={join}>
  <label htmlFor="join-name">Your name</label><input id="join-name" autoComplete="name" required maxLength={60} value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/>

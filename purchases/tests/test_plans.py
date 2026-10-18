@@ -327,3 +327,23 @@ class SharedPlanTests(TestCase):
         self.assertEqual(response.json()['plan']['details']['plan_sections'][0]['heading'],'Itinerary')
         self.assertEqual(APIClient().get(url).status_code,401)
         self.assertNotIn('PRIVATE TRANSCRIPT',str(response.json()))
+
+    @patch('purchases.rules._notify_dropout')
+    @patch('purchases.tasks.schedule_purchase_jobs')
+    def test_withdrawal_updates_plan_roster_and_preserves_other_approved_amounts(self, schedule, notify):
+        from purchases.rules import member_withdraw
+        owner, guest = APIClient(), APIClient()
+        self.owner_join(owner)
+        guest_data=self.join(guest,2).json()
+        for n in [3,4]: self.join(APIClient(),n)
+        before=owner.get(self.path).json()
+        share=Share.objects.get(purchase__group=self.plan.group,member_id=guest_data['me']['id'])
+        result=member_withdraw(share.id,'member_left')
+        self.assertEqual(result['share_status'],'declined')
+        updated=owner.get(self.path).json()
+        self.assertEqual(updated['joined_count'],3)
+        departed=next(m for m in updated['members'] if m['id']==guest_data['me']['id'])
+        self.assertTrue(departed['left'])
+        self.assertEqual(departed['share_status'],'declined')
+        self.assertEqual(updated['my_share']['amount_cents'],before['my_share']['amount_cents'])
+        self.assertEqual(guest.get(self.path).json()['my_share']['status'],'declined')
