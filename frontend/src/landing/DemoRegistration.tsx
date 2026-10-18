@@ -39,6 +39,7 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
   const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const android = /Android/.test(navigator.userAgent);
   const ready = connection?.status === "ready" || connection?.status === "active";
+  const messagesUrl = ready && connection.destination ? `sms:${connection.destination}` : "";
   const failed = connection?.status === "failed";
   const [waitingLong, setWaitingLong] = useState(false);
 
@@ -86,14 +87,12 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
   }, [token, android, pollAttempt]);
 
   useEffect(() => {
-    if (!token || iphone || android) return;
+    if (!messagesUrl || iphone || android) return;
     let cancelled = false;
-    const url = new URL("/", window.location.origin);
-    url.hash = new URLSearchParams({ demo: token }).toString();
-    void QRCode.toDataURL(url.toString(), { width: 240, margin: 2, errorCorrectionLevel: "M" })
+    void QRCode.toDataURL(messagesUrl, { width: 240, margin: 2, errorCorrectionLevel: "M" })
       .then(value => { if (!cancelled) setQr(value); }).catch(() => { if (!cancelled) setQr(""); });
     return () => { cancelled = true; };
-  }, [token, iphone, android]);
+  }, [messagesUrl, iphone, android]);
 
   async function register(event: React.FormEvent) {
     event.preventDefault();
@@ -119,7 +118,7 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
     setToken(""); rememberTicket(""); setConnection(null); setError(""); setWaitingLong(false); setQr("");
   }
 
-  return <dialog ref={dialog} className="demo-dialog" aria-labelledby="demo-title" onCancel={onClose} onClick={event => {
+  return <dialog ref={dialog} className={`demo-dialog${ready && !iphone && !android ? " demo-dialog-wide" : ""}`} aria-labelledby="demo-title" onCancel={onClose} onClick={event => {
     if (event.target === event.currentTarget) {
       const bounds = event.currentTarget.getBoundingClientRect();
       if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
@@ -152,17 +151,20 @@ export default function DemoRegistration({ initialToken, onClose }: { initialTok
         <div className="demo-connection" role="status" aria-live="polite">
           {error ? "Connection paused" : failed ? connection.error?.message : ready ? "Connected to tandem" : waitingLong ? "This is taking longer than expected. Check again in a moment." : "Connecting your number to iMessage…"}
         </div>
-        {ready && connection.destination && <>
+        {ready && connection.destination && <div className="demo-ready-grid">
+          <div className="demo-ready-details">
           <p>Open Messages and send a hello—or tell tandem what you’re planning.</p>
-          {iphone ? <a className="btn primary demo-primary" href={`sms:${connection.destination}`}>Try now <span aria-hidden="true">↗</span></a> : <>
-            {qr && <img className="demo-qr" src={qr} width="220" height="220" alt="Scan with your iPhone camera to continue to iMessage" />}
-            <p className="demo-scan">Scan with your iPhone camera, then tap <strong>Try now</strong>.</p>
-          </>}
+          {iphone && <a className="btn primary demo-primary" href={messagesUrl}>Try now <span aria-hidden="true">↗</span></a>}
           <button className="demo-number" onClick={() => {
             void navigator.clipboard?.writeText(connection.destination!).then(() => setCopied(true)).catch(() => setCopied(false));
           }}>{connection.destination}<span>{copied ? "Copied" : "Copy number"}</span></button>
           <small className="demo-note">Send from the number you registered. Opening Messages doesn’t send anything.</small>
-        </>}
+          </div>
+          {!iphone && <aside className="demo-qr-panel" aria-label="Open tandem in Messages">
+            {qr && <img className="demo-qr" src={qr} width="220" height="220" alt="Scan with your iPhone camera to open Messages addressed to tandem" />}
+            <p className="demo-scan">Scan to open Messages.<br />Send a text to start.</p>
+          </aside>}
+        </div>}
         {!ready && !failed && !error && !waitingLong && <button className="btn primary demo-primary" disabled>Connecting…</button>}
         {(error || waitingLong) && <button className="btn demo-primary" onClick={() => { setError(""); setWaitingLong(false); setPollAttempt(value => value + 1); }}>Check connection again</button>}
         {failed && <button className="btn demo-primary" onClick={reset}>Try registering again</button>}

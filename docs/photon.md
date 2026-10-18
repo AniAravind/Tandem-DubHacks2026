@@ -14,13 +14,13 @@ Validation: `python manage.py test chat.tests.test_photon` and `npm run test:pho
 
 ## Public registration
 
-All landing-page demo buttons open a shared phone-entry modal. Visitors connect their sending number, wait for their assigned Photon route, then open Messages and send the first text. Desktop visitors scan a QR code to continue on iPhone. Android visitors can use the browser demo. No contact is saved and registration sends no messages or invitations.
+All landing-page demo buttons open a shared phone-entry modal. Visitors connect their sending number, wait for their assigned Photon route, then open Messages and send the first text. Desktop visitors scan a QR code beside the connection details to open Messages directly on iPhone. Android visitors can use the browser demo. No contact is saved and registration sends no messages or invitations.
 
 Deploy with enrollment disabled (the default), apply the migration, and start the updated Photon process. Verify the existing user still works, then set `PHOTON_PUBLIC_REGISTRATION=1`. Set it back to `0` to close new enrollment; registered users keep working. Run exactly one Photon process alongside the Celery worker. Provider capacity and iMessage availability still apply; this feature never upgrades the Photon plan or purchases dedicated lines.
 
 - `POST /api/v1/demo/registrations` accepts `{phone}` and returns an expiring onboarding `token` and provisioning status. It is idempotent by project + normalized phone. Phones are encrypted and are never returned to the public client.
 - `GET /api/v1/demo/registrations/status` accepts `X-Tandem-Onboarding`. It returns `queued`, `provisioning`, `connecting`, `ready`, `active`, or `failed`; only ready/active responses contain the assigned destination. Tickets expire after 30 minutes and authorize no chat, member, or payment access.
-- QR handoffs put the ticket in a URL fragment, not a request URL or referrer. Public responses use `Cache-Control: no-store`.
+- QR codes encode `sms:<assigned destination>` directly, with no website hop or onboarding ticket. Older landing-page ticket fragments remain supported. Public responses use `Cache-Control: no-store`.
 - A Celery task calls Spectrum Cloud's `/projects/{id}/users/` using project ID/secret HTTP Basic authentication. It reuses one exact phone match or creates a shared user with invitations disabled. The verified response envelope is `{succeed, data}`; user records include `id`, `phoneNumber`, `assignedPhoneNumber`, and `type`.
 - Readiness requires a signed connection heartbeat from the Photon process. Missing heartbeats return the public status to connecting after 60 seconds. Its authenticated registry refreshes every 15 seconds; a replacement stream is prepared before stopping the old one. Inbound overlap is deduplicated; failed outbound sends remain pending.
 - Dedicated routes require the exact destination; shared routes use Spectrum's project-scoped `shared` sentinel. The signed `registry` action exposes routing data only to the Photon process.
