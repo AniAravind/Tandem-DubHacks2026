@@ -78,6 +78,20 @@ class SharedPlanTests(TestCase):
         self.assertEqual(build_group_state(self.source)['mode'],'private_planning')
         self.assertEqual(build_group_state(self.source)['planning_options'][0]['id'],self.option['id'])
 
+    def test_private_agent_tools_are_small_and_published_link_survives_narration_failure(self):
+        from agent.orchestrator import Orchestrator
+        from agent.tests.helpers import reply, tool_call
+        count = 0
+        def llm(messages,tools,**kwargs):
+            nonlocal count
+            self.assertEqual({t['function']['name'] for t in tools},{'search_options','publish_plan'})
+            count += 1
+            if count == 1:
+                return reply(calls=[tool_call('publish_plan',self.args)])
+            raise TimeoutError('Narration unavailable')
+        out = Orchestrator(self.source.id,engine=self.engine,llm_chat=llm).run(self.actor)
+        self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
+
     def test_join_needs_only_name_phone_acceptance_and_sets_cookie(self):
         client = APIClient()
         response = self.join(client, 2)

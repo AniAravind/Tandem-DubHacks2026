@@ -1,6 +1,8 @@
 import json
 import httpx
 from openai import BadRequestError
+from openai import RateLimitError
+from unittest.mock import patch
 
 from django.test import TestCase
 
@@ -93,6 +95,19 @@ class OrchestratorTest(TestCase):
         self.assertEqual(validate({**SEARCH, 'budget_per_person_max': 300}, schema), [])
         self.assertTrue(validate({**SEARCH, 'budget_per_person_max': 30000}, schema))
         self.assertIn('USD dollars', schema['properties']['budget_per_person_max']['description'])
+
+    @patch('agent.orchestrator.time.sleep')
+    def test_rate_limit_waits_before_retry(self, sleep):
+        limited = RateLimitError('Rate limited', response=httpx.Response(429,headers={'retry-after':'3'},request=httpx.Request('POST','https://provider.invalid')),body={'code':'rate_limit_exceeded'})
+        o, llm = self.orch(limited,reply('Ready.'))
+        self.assertEqual(o.run(self.actor)[0].text,'Ready.')
+        sleep.assert_called_once_with(3.1)
+        self.assertEqual(len(llm.requests),2)
+
+    def test_completed_option_cards_survive_narration_failure(self):
+        o, _ = self.orch(reply(calls=[tool_call('search_options',SEARCH)]),TimeoutError('narration'),TimeoutError('narration retry'))
+        out = o.run(self.actor)
+        self.assertEqual([m.card.type for m in out],['OptionCard']*3)
 
     def test_ids_from_another_group_rejected(self):
         other = Group.objects.create(name="Other")
