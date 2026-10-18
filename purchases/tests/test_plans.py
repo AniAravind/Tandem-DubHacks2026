@@ -129,6 +129,32 @@ class SharedPlanTests(TestCase):
         out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor)
         self.assertEqual(sum(m.card is not None and m.card.type=='OptionCard' for m in out),3)
 
+    def test_add_resends_real_saved_proposal_without_calling_model(self):
+        from agent.orchestrator import Orchestrator
+        def no_llm(*args,**kwargs):
+            raise AssertionError('Saved options are sufficient for an explicit Add/link request')
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=no_llm).run(self.actor,text='Add')
+        self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=no_llm).run(self.actor,text='Send me the organizer link')
+        self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
+        self.assertEqual(TripPlan.objects.filter(source_group=self.source).count(),1)
+
+    def test_explicit_invite_request_publishes_after_search_even_if_model_stops(self):
+        from agent.orchestrator import Orchestrator
+        from agent.tests.helpers import ScriptedLLM,reply,tool_call
+        model=ScriptedLLM(reply(calls=[tool_call('search_options',{'category':'rental','group_size':4,'budget_per_person_max':300})]),reply('Which place would you like?'))
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor,text='Create a group invite link for 4 travelers after searching')
+        self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
+        self.assertEqual(TripPlan.objects.filter(source_group=self.source).count(),2)
+
+    def test_resend_keeps_the_already_chosen_plan(self):
+        from agent.orchestrator import Orchestrator
+        option=self.source.options.exclude(pk=self.option['id']).first()
+        chosen=self.engine.execute('publish_plan',{'option_id':str(option.id),'title':'Our chosen place','summary':'The organizer chose this option.'},self.actor)['data']['plan_id']
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=lambda *args,**kwargs:None).run(self.actor,text='Send me the organizer link')
+        self.assertTrue(any(m.link and f'/p/{chosen}?' in m.link for m in out))
+        self.assertEqual(TripPlan.objects.filter(source_group=self.source).count(),2)
+
     def test_join_needs_only_name_phone_acceptance_and_sets_cookie(self):
         client = APIClient()
         response = self.join(client, 2)
