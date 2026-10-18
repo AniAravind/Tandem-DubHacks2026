@@ -29,6 +29,8 @@ export interface Group {
   name: string;
   timezone: string;
   members: GroupMember[];
+  payments_mode?: "visa_sandbox" | "simulated";
+  payments_label?: string;
   current_member_id?: string;
   can_switch_member?: boolean;
 }

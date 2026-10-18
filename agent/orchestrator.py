@@ -492,7 +492,12 @@ class Orchestrator:
                 plan = TripPlan.objects.filter(pk=data.get('plan_id'), source_group=self.group).first()
                 if plan:
                     featured = next((o for o in plan.details.get('live_offers') or [] if o['offer_id'] == plan.details.get('featured_offer_id')), None) or next((o for o in plan.details.get('live_offers') or [] if o['label'] == plan.details.get('featured_offer')), None)
-                    if plan.selected_option_id:
+                    if plan.selected_option_id and plan.details.get('price_source'):
+                        total, n = plan.selected_option.total_cents, max(1, plan.expected_members)
+                        from purchases.payment_mode import payments_label
+                        note = (f"Priced from {plan.details['price_source']}: {cards.usd(total)} total, about "
+                                f"{cards.usd(-(-total // n))} each. Everyone approves only their own share ({payments_label()}).")
+                    elif plan.selected_option_id:
                         note = 'Each person reviews their own share on the plan.'
                     elif featured:
                         note = (f"It features {featured['title']} from {featured['source']}. That’s a live web listing, "

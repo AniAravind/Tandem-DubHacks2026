@@ -17,6 +17,7 @@ from chat.adapters.web import WebChatAdapter, next_seq
 from chat.models import ChatMessage
 from core.events import EventType, log_event
 from core.models import EventLog, Group
+from purchases.payment_mode import payments_label
 
 log = logging.getLogger(__name__)
 
@@ -271,7 +272,7 @@ def demo_share_action(member, action: str) -> dict:
     if action == "hold":
         text = f"{member.display_name}'s in. {counts['held']} of {counts['active']} held."
         if counts["held"] == counts["active"]:
-            text = f"✅ All {counts['active']} in. Nobody fronted anything. Booking goes through signed merchant checkout next. (Simulated.)"
+            text = f"✅ All {counts['active']} in. Nobody fronted anything. Booking goes through signed merchant checkout next. ({payments_label().capitalize()}.)"
         elif counts["active"] - counts["held"] == 1:
             text += f" Waiting on 1 more, deadline {when(p['deadline_at'], member.group.timezone)}."
         post_card(member.group_id, AgentMessage(text=text, card=funding_card(p)))

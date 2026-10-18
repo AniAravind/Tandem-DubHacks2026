@@ -22,7 +22,10 @@ def deployment_problems():
     except ImproperlyConfigured:
         secret=''
     need(len(secret)>=50 and not secret.startswith(('change-', 'test-', 'example')), 'E002', 'Set a strong DJANGO_SECRET_KEY (at least 50 characters).')
-    need(settings.PAYMENTS_GATEWAY=='simulated', 'E003', 'This build requires PAYMENTS_GATEWAY=simulated.')
+    need(settings.PAYMENTS_GATEWAY in ('simulated','visa_sandbox'), 'E003', 'PAYMENTS_GATEWAY must be simulated or visa_sandbox (never live).')
+    if settings.PAYMENTS_GATEWAY == 'visa_sandbox':
+        need(all(os.getenv(k) for k in ('VISA_MERCHANT_ID','VISA_KEY_ID','VISA_SHARED_SECRET')), 'E021', 'visa_sandbox needs VISA_MERCHANT_ID, VISA_KEY_ID and VISA_SHARED_SECRET.')
+        need(os.getenv('VISA_HOST','apitest.cybersource.com') == 'apitest.cybersource.com', 'E022', 'VISA_HOST must be the sandbox host apitest.cybersource.com.')
     need(not settings.CELERY_TASK_ALWAYS_EAGER, 'E004', 'Deployment requires CELERY_EAGER=0 and a worker.')
     db=settings.DATABASES['default']
     need(db['ENGINE'].endswith('postgresql') and db.get('HOST') not in ('', 'localhost','127.0.0.1','::1'), 'E005', 'Deployment requires hosted PostgreSQL.')
