@@ -49,7 +49,7 @@ class ScriptedDemoTest(TestCase):
         self.assertIn("🗳️ Pinecrest A-Frame wins, 4 votes to 0.", self.texts())
         funding = [m for m in self.out() if m.card and m.card["type"] == "FundingCard"]
         self.assertEqual(len(funding[-1].card["data"]["members"]), 6)
-        self.assertTrue(any("(Simulated.)" in t for t in self.texts()))
+        self.assertTrue(any("Your link is private, just for you." in t for t in self.texts()))
         links = ChatMessage.objects.filter(group=self.group, direction="out", member__isnull=False)
         self.assertEqual(links.count(), 6)
         self.assertIn("$175", links.first().text_redacted)

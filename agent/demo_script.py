@@ -4,7 +4,6 @@ The tool calls still go through the same validation, id checks, engine, events, 
 only Grok is skipped. Text is filled in from tool results, never hardcoded prices.
 Also used as the backup when Grok is unreachable in DEMO_MODE.
 """
-from purchases.payment_mode import payments_label
 import json
 import re
 from collections import Counter
@@ -59,7 +58,7 @@ def open_funding(orch, actor, event):
         return None
     d = got["create_purchase"]
     return (f"Next: everyone holds their share. Nothing gets charged unless all {len(ids)} are in by "
-            f"{when(d['deadline_at'], orch.group.timezone)}.\nYour link is private, just for you. ({payments_label().capitalize()}.)")
+            f"{when(d['deadline_at'], orch.group.timezone)}.\nYour link is private, just for you.")
 
 
 def fallback(orch, actor, event):

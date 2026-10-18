@@ -34,7 +34,6 @@ from django.utils.dateparse import parse_datetime
 from chat.adapters.base import AgentMessage, Card
 from core.events import EventType, event_context, log_event
 from core.models import EventLog, Member
-from purchases.payment_mode import payments_label
 from payments.gateway import GatewayError, Money, get_gateway
 from merchant import signing as agent_signing
 from merchant.models import Listing, SignedRequest
@@ -120,7 +119,7 @@ def _post_group_update(purchase_id) -> None:
         "members": [{"id": str(s.member_id), "initials": s.member.display_name[:1].upper(),
                      "display_name": s.member.display_name, "status": s.status} for s in shares],
         "simulated": True}
-    _post(purchase.group_id, AgentMessage(text=f"{len(held)} of {len(shares)} held ({payments_label()})", card=Card("FundingCard", data)))
+    _post(purchase.group_id, AgentMessage(text=f"{len(held)} of {len(shares)} held", card=Card("FundingCard", data)))
 
 
 # --------------------------------------------------------------------------------------
@@ -244,7 +243,7 @@ def checkout(purchase_id) -> dict:
                 return _compensate(gateway, client, purchase, booking, shares, reason=e.code)
 
         _post(purchase.group_id, AgentMessage(
-            text=f"Booked! Reference {booking.merchant_booking_ref} ({payments_label()}).",
+            text=f"Booked! Reference {booking.merchant_booking_ref}.",
             card=Card("BookingConfirmed", {
                 "title": option.title, "dates": _dates_label(quote.get("check_in"), quote.get("check_out")),
                 "booking_ref": booking.merchant_booking_ref, "per_person_cents": consensus.ceil_div(purchase.total_cents, len(shares)),
@@ -307,7 +306,7 @@ def _compensate(gateway, client, purchase: Purchase, booking: Booking, shares: l
     transition_purchase(purchase.id, P.CANCELLED, actor="rules", reason=reason)
     transition_purchase(purchase.id, P.REFUNDED, actor="rules", reason=reason)
     _post(purchase.group_id, AgentMessage(text="The booking could not be completed, so it was cancelled and "
-                                               f"everyone was refunded ({payments_label()})."))
+                                               "everyone was refunded."))
     return {"status": "compensated", "reason": reason}
 
 # --------------------------------------------------------------------------------------
@@ -768,7 +767,7 @@ def _send_consent_links(shares: list) -> int:
         purchase = share.purchase
         text = (f"Your share for {purchase.option.title}: {ser.money(share.amount_cents)}. "
                 f"Hold it by {_when(purchase.deadline_at, purchase.group.timezone)}. "
-                f"It's a hold, not a charge, and you can say no on the page. ({payments_label().capitalize()}.)")
+                "It's a hold, not a charge, and you can say no on the page.")
         sent += _send_private(purchase.group_id, share.member_id, text, consent_link(share))
     return sent
 
