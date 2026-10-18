@@ -161,5 +161,23 @@ class BuyingTests(TestCase):
         state = PhotonSession.objects.get(member=self.owner).planning_state
         self.assertTrue(state['_buyer_count_confirmed'])
         self.assertEqual(state['budget_per_person_cents'],6000)
-        result = self.engine.execute('save_buying_brief',{**args,'group_size_evidence':'an invented phrase'},self.actor)
+        result = self.engine.execute('save_buying_brief',{**args,'new_goal':False,'group_size_evidence':'an invented phrase'},self.actor)
         self.assertEqual(result['error']['code'],'buyer_count_evidence_missing')
+
+    def test_new_goal_can_be_recovered_from_cited_request_after_followups(self):
+        self.brief()
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=3,
+            text_redacted='Plan a trip for me and 4 friends to Mt Rainier. 200 dollars a person. 10/20-10/22.')
+        ChatMessage.objects.create(group=self.source,member=self.owner,direction='in',seq=4,text_redacted='Seattle')
+        args = {'goal':'Mt Rainier trip','category':'travel','group_size':5,'budget_per_person':200,
+            'new_goal':True,'source_message_seq':3,'decision_details':[{'topic':'Origin','value':'Seattle'}]}
+        result=self.engine.execute('save_buying_brief',args,self.actor)
+        self.assertTrue(result['ok'],result)
+        state=PhotonSession.objects.get(member=self.owner).planning_state
+        self.assertEqual(state['group_size'],5)
+        self.assertEqual(state['budget_per_person_cents'],20000)
+        self.assertTrue(state['_buyer_count_confirmed'])
+        self.assertNotIn('gift',state['goal'].lower())
+        self.assertEqual(self.engine.execute('save_buying_brief',{**args,'source_message_seq':999},self.actor)['error']['code'],'request_source_missing')
+        self.assertEqual(self.engine.execute('save_buying_brief',{**args,'source_message_seq':2},self.actor)['error']['code'],'stale_request_source')
+        self.assertFalse(self.engine.execute('save_buying_brief',{**args,'source_message_seq':4,'budget_per_person':999},self.actor)['ok'])

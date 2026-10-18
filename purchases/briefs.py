@@ -38,21 +38,31 @@ def save(member, args):
     from agent.dialogue import public_brief
     message = ChatMessage.objects.filter(group=member.group, direction='in').order_by('-seq').first()
     latest = message.text_redacted if message else ''
+    source = message
+    if args.get('source_message_seq') is not None:
+        source = ChatMessage.objects.filter(group=member.group, direction='in', seq=args['source_message_seq']).first()
+        if source is None:
+            raise RuleError('request_source_missing', 'source_message_seq must identify a user message in this chat.')
+    source_text = source.text_redacted if source else ''
     previous = dict(session.planning_state)
     category = canonical_category(args['category'])
     old_category = previous.get('category')
     travel = category in TRAVEL_CATEGORIES and old_category in TRAVEL_CATEGORIES
     changing = bool(previous.get('goal')) and (args.get('new_goal') is True or (category != old_category and not travel))
     short_reply = bool(re.fullmatch(r'\s*(?:yes|no|confirmed|correct|okay|ok|sure|\d+(?:\.\d+)?)\s*[.!]?\s*', latest, re.I))
-    if changing and short_reply:
+    if changing and source and source.seq <= previous.get('_request_seq', 0):
+        raise RuleError('stale_request_source', 'A new goal must come from a newer user request, not an older completed goal.')
+    if changing and short_reply and source == message:
         raise RuleError('goal_change_not_confirmed', 'This is an answer to the pending question, not a new purchase. Preserve the current goal and confirmed facts.')
     base = {} if changing else previous
-    count = explicit_buyer_count(latest)
+    count = explicit_buyer_count(latest) or (explicit_buyer_count(source_text) if changing or not previous.get('goal') else None)
     evidence = args.get('group_size_evidence', '').strip()
-    if evidence and ' '.join(evidence.casefold().split()) not in ' '.join(latest.casefold().split()):
-        raise RuleError('buyer_count_evidence_missing', 'group_size_evidence must quote the latest user message exactly.')
+    if evidence and ' '.join(evidence.casefold().split()) not in ' '.join(source_text.casefold().split()):
+        raise RuleError('buyer_count_evidence_missing', 'group_size_evidence must quote the source user message exactly.')
     if count is not None and args['group_size'] != count:
         raise RuleError('buyer_count_mismatch', f'The user explicitly specified {count} total buyers. Use group_size={count}.')
+    if evidence and source != message and not changing and base.get('_buyer_count_confirmed') and args['group_size'] != base.get('group_size'):
+        raise RuleError('buyer_count_not_confirmed', 'An older request cannot override the subsequently confirmed buyer count.')
     if base.get('_buyer_count_confirmed', bool(base.get('group_size'))) and base.get('group_size') and args['group_size'] != base['group_size'] and count is None and not evidence:
         raise RuleError('buyer_count_not_confirmed', f"Keep the confirmed {base['group_size']} buyers; a short answer or reworded goal cannot change the roster.")
     budget = args.get('budget_per_person')
@@ -71,7 +81,7 @@ def save(member, args):
             if message and base.get('_budget_answer_seq') == message.seq:
                 known = {base['budget_per_person_cents']}
         else:
-            known = planning_amounts_in(latest)
+            known = planning_amounts_in(latest) or planning_amounts_in(source_text)
         stated = total if total is not None else budget
         if round(stated * 100) not in known:
             raise RuleError('budget_not_confirmed', 'Pass the user-stated amount: budget_total for a combined budget or budget_per_person for a per-buyer budget. The server calculates the split; do not pass a derived split as a directly stated amount.')
@@ -94,7 +104,7 @@ def save(member, args):
     details = {item['topic'].casefold():item for item in base.get('decision_details', [])}
     for item in args.get('decision_details', []):
         details[item['topic'].casefold()] = {key:redact(value) for key,value in item.items()}
-    state = {**base, 'goal':base.get('goal') or redact(args['goal']), 'category':base.get('category') or category,
+    state = {**base, '_request_seq':base.get('_request_seq') or (source.seq if source else 0), 'goal':base.get('goal') or redact(args['goal']), 'category':base.get('category') or category,
              'group_size':count or (args['group_size'] if evidence else None) or (base.get('group_size') if base.get('_buyer_count_confirmed', True) else None) or args['group_size'],
              '_buyer_count_confirmed':count is not None or bool(evidence) or base.get('_buyer_count_confirmed', False),
              'budget_per_person_cents':round(budget * 100) if budget is not None else base.get('budget_per_person_cents'),

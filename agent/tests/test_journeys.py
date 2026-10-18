@@ -4,6 +4,7 @@ The model is scripted (no network), so these pin down OUR behavior at each conve
 stale choices, provider outages, repeated tool calls, and the server-written replies that save quota.
 """
 import hashlib
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -166,6 +167,36 @@ class ModelFallbackTests(TestCase):
                 patch.object(llm, "FALLBACK_MODELS", ["b"]):
             self.assertEqual(llm.chat([], []).model, "b")
         self.assertEqual([m for m, *_ in seen], ["a", "b"])
+
+    def test_native_rejection_regenerates_structured_action_without_failed_payload(self):
+        rejected = BadRequestError("Invalid tool call", response=httpx.Response(400,
+            request=httpx.Request("POST", "https://provider.invalid")),
+            body={"code":"tool_use_failed","failed_generation":"DO NOT EXECUTE THIS"})
+        response=SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(
+            content=json.dumps({'content':'','tool_calls':[{'name':'save_buying_brief','arguments':'{"group_size":5}'}]})))])
+        requests=[]
+        def create(**kwargs):
+            requests.append(kwargs)
+            if len(requests)==1: raise rejected
+            return response
+        client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        tools=[{'type':'function','function':{'name':'save_buying_brief','parameters':{'type':'object'}}}]
+        with patch.object(llm,'client',client),patch.object(llm,'MODEL','openai/gpt-oss-120b'), \
+             patch.object(llm,'FALLBACK_MODELS',[]),patch.object(llm,'_GROQ',True):
+            result=llm.chat([{'role':'user','content':'A trip for 5'}],tools)
+        self.assertEqual(result.choices[0].message.tool_calls[0].function.name,'save_buying_brief')
+        self.assertEqual(result.choices[0].message.tool_calls[0].function.arguments,'{"group_size":5}')
+        self.assertTrue(requests[1]['response_format']['json_schema']['strict'])
+        self.assertNotIn('tools',requests[1])
+        self.assertNotIn('DO NOT EXECUTE THIS',json.dumps(requests[1]))
+
+    def test_structured_recovery_cannot_call_unknown_or_forbidden_tools(self):
+        response=SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(
+            content=json.dumps({'content':'','tool_calls':[{'name':'charge_card','arguments':'{}'}]})))])
+        client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs:response)))
+        with patch.object(llm,'client',client):
+            with self.assertRaises(ValueError): llm._structured_recovery('a',[],[],'auto')
+            with self.assertRaises(ValueError): llm._structured_recovery('a',[],[{'function':{'name':'charge_card'}}],'none')
 
     def test_key_rotation_does_not_inherit_old_cooldown(self):
         with patch.dict("os.environ", {"XAI_API_KEY": "old"}):

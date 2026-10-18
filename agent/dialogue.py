@@ -12,7 +12,7 @@ from chat.models import ChatMessage, PhotonSession
 
 
 def question_type(text):
-    if re.search(r'how many (?:people|travelers|travellers|buyers|participants|friends)|number of (?:people|travelers|travellers|buyers)|travelers count', text, re.I):
+    if re.search(r'how many (?:people|travelers|travellers|buyers|participants|friends|of you|of us)|number of (?:people|travelers|travellers|buyers)|travelers count', text, re.I):
         return 'count'
     if re.search(r'(?:what|which|how much)[^?]{0,100}(?:budget|spend)|(?:budget|spend)[^?]{0,80}(?:use|amount)', text, re.I):
         return 'budget'
@@ -77,8 +77,12 @@ def remember_answer(group, text, seq):
             state['budget_basis'] = 'per_person'
             state['budget_total_cents'] = cents * state.get('group_size', 1)
             state['_budget_answer_seq'] = seq
-    if dialogue.get('answer_type') == 'count' and re.fullmatch(r'\s*\d{1,2}\s*', text):
-        count = int(text)
+    if dialogue.get('answer_type') == 'count':
+        from purchases.briefs import explicit_buyer_count
+        count = int(text) if re.fullmatch(r'\s*\d{1,2}\s*', text) else explicit_buyer_count(text)
+    else:
+        count = None
+    if count is not None:
         if 1 <= count <= 20:
             if count != state.get('group_size'):
                 state['revision'] = uuid.uuid4().hex

@@ -302,7 +302,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 300,
-            "description": "Exact phrase from the latest user message supporting the interpreted number of buyers. Use this for counts stated in words or relationships so the server can retain that count as confirmed without keyword-specific parsing. Do not include the recipient unless the user says they are paying."
+            "description": "Exact phrase from the source user message (latest by default, or source_message_seq) supporting the interpreted number of buyers. Use this for counts stated in words or relationships so the server can retain that count as confirmed without keyword-specific parsing. Do not include the recipient unless the user says they are paying."
           },
           "summary": {
             "type": "string",
@@ -399,6 +399,11 @@
           "new_goal": {
             "type": "boolean",
             "description": "True only when the user starts a DIFFERENT purchase. Defaults to partial update. Flights and lodging within a trip are the same goal. Never true for yes/no, a place name, count or budget answer."
+          },
+          "source_message_seq": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Sequence number of the user message that states this buying request. Use when recovering a new goal from an earlier message after follow-ups. Must refer to an actual inbound message in this chat, newer than the saved goal. Facts are checked against that message; do not cite unrelated older requests."
           }
         }
       }

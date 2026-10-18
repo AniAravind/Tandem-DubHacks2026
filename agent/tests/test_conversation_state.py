@@ -172,3 +172,12 @@ class ConversationStateTests(TestCase):
         offer=live.sanitize_offer({'kind':'flight','price_cents':42100,'price_unit':'listed','est_per_person_cents':10525,'fits_budget':True})
         self.assertIsNone(offer['est_per_person_cents'])
         self.assertIsNone(offer['fits_budget'])
+
+    def test_relational_headcount_question_keeps_numeric_answer_through_outage(self):
+        self.assertEqual(question_type('How many of you are going on the trip?'),'count')
+        self.ask('How many of you are going on the trip?')
+        self.input('5')
+        self.assertEqual(self.state()['group_size'],5)
+        self.assertTrue(self.state()['_buyer_count_confirmed'])
+        self.input('6 people')
+        self.assertEqual(self.state()['group_size'],6)

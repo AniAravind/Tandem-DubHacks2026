@@ -100,7 +100,9 @@ class SharedPlanTests(TestCase):
         messages=build_messages(self.source,SYSTEM_PROMPT)
         self.assertNotIn('FALSE ORGANIZER LINK',str(messages))
         self.assertIn('PRIVATE TRANSCRIPT DO NOT SHARE',str(messages))
-        self.assertIn('NEVER blocks a search',messages[-1]['content'])
+        self.assertTrue(any('NEVER blocks a search' in m['content'] for m in messages if m['role']=='system'))
+        self.assertEqual(messages[-1]['role'],'user')
+        self.assertIn('Current user message',messages[-1]['content'])
 
     def test_false_link_claim_triggers_publication_and_only_server_link_narration(self):
         from agent.orchestrator import Orchestrator
