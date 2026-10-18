@@ -92,6 +92,43 @@ class SharedPlanTests(TestCase):
         out = Orchestrator(self.source.id,engine=self.engine,llm_chat=llm).run(self.actor)
         self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
 
+    def test_private_context_excludes_obsolete_assistant_claims(self):
+        from agent.context import build_messages
+        from agent.orchestrator import SYSTEM_PROMPT
+        ChatMessage.objects.create(group=self.source,direction='out',seq=2,text_redacted='FALSE ORGANIZER LINK. Only one member means a search cannot run.')
+        messages=build_messages(self.source,SYSTEM_PROMPT)
+        self.assertNotIn('FALSE ORGANIZER LINK',str(messages))
+        self.assertIn('PRIVATE TRANSCRIPT DO NOT SHARE',str(messages))
+        self.assertIn('NEVER blocks a search',messages[-1]['content'])
+
+    def test_false_link_claim_triggers_publication_and_only_server_link_narration(self):
+        from agent.orchestrator import Orchestrator
+        from agent.tests.helpers import ScriptedLLM,reply,tool_call
+        model=ScriptedLLM(reply('Here’s the private organizer link — share it with friends.'),
+                          reply(calls=[tool_call('publish_plan',self.args)]),
+                          reply('Share the private organizer link with all your friends.'))
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor)
+        self.assertTrue(any(m.link and '?owner=' in m.link for m in out))
+        self.assertNotIn('Share the private organizer link',str([m.text for m in out]))
+        self.assertIn('No plan link has been created',model.requests[1][-1]['content'])
+
+    def test_unrepaired_false_link_claim_is_not_delivered(self):
+        from agent.orchestrator import Orchestrator
+        from agent.tests.helpers import ScriptedLLM,reply
+        model=ScriptedLLM(*[reply('Here is the private organizer link.') for _ in range(3)])
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor)
+        self.assertEqual(len(out),1)
+        self.assertIn('haven’t created a link',out[0].text)
+        self.assertIsNone(out[0].link)
+
+    def test_private_single_member_search_block_is_repaired(self):
+        from agent.orchestrator import Orchestrator
+        from agent.tests.helpers import ScriptedLLM,reply,tool_call
+        model=ScriptedLLM(reply('I see only you, so a 4-person search can’t run yet.'),
+            reply(calls=[tool_call('search_options',{'category':'rental','group_size':4,'budget_per_person_max':300})]),reply('Here are the options.'))
+        out=Orchestrator(self.source.id,engine=self.engine,llm_chat=model).run(self.actor)
+        self.assertEqual(sum(m.card is not None and m.card.type=='OptionCard' for m in out),3)
+
     def test_join_needs_only_name_phone_acceptance_and_sets_cookie(self):
         client = APIClient()
         response = self.join(client, 2)
