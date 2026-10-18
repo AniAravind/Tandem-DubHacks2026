@@ -66,6 +66,34 @@ class Orchestrator:
             from agent.llm import chat as llm_chat
         self.llm_chat = llm_chat
         self.tool_results: list[tuple[str, dict]] = []     # successful (tool, data) this turn, for cards + output filter
+        self.tool_attempts = 0
+        self.link_request_actor = None
+
+    def publish_requested_proposal(self, *, reuse_published=False):
+        """Complete an explicit link request from real options, without invented IDs or members."""
+        if not self.link_request_actor or self.tool_attempts >= MAX_TOOL_CALLS or any(name == 'publish_plan' for name, data in self.tool_results):
+            return False
+        from purchases.serializers import latest_options_json
+        from purchases.models import TripPlan
+        existing = TripPlan.objects.filter(source_group=self.group).select_related('selected_option').order_by('-created_at').first() if reuse_published else None
+        newest = Option.objects.filter(group=self.group).order_by('-created_at').first()
+        if existing and newest and newest.created_at <= existing.created_at:
+            source = Option.objects.filter(group=self.group, pk=existing.selected_option.meta.get('source_option_id')).first()
+            if source:
+                result = self.run_tool('publish_plan', json.dumps({'option_id':str(source.id),'title':existing.title,'summary':existing.summary}), self.link_request_actor)
+                return bool(result.get('ok'))
+        options = latest_options_json(self.group)['options']
+        if not options:
+            return False
+        option = options[0]
+        meta = option['meta']
+        location = meta.get('location') or 'Group trip'
+        dates = ' to '.join(filter(None, [meta.get('check_in'), meta.get('check_out')]))
+        summary = (f"Proposed trip for {option['group_size']} people{(' · ' + dates) if dates else ''}. "
+                   f"Suggested place: {option['title']}. This is the top-ranked match from your search, "
+                   "for everyone to review together. Joining accepts this proposed plan; each person separately approves their own exact payment share.")
+        result = self.run_tool('publish_plan', json.dumps({'option_id':option['id'], 'title':f'{location} · group plan'[:120], 'summary':summary}), self.link_request_actor)
+        return bool(result.get('ok'))
 
     def private_reply_problem(self, text):
         from chat.models import PhotonSession
@@ -98,6 +126,7 @@ class Orchestrator:
         return {"ok": False, "error": {"code": reason, "message": details or reason}}
 
     def run_tool(self, name: str, raw_args: str, actor: str) -> dict:
+        self.tool_attempts += 1
         if name not in TOOL_NAMES:
             return self._reject(name, "unknown_tool", "Only the listed tools exist.")
         try:
@@ -164,6 +193,16 @@ class Orchestrator:
         if os.getenv("DEMO_SCRIPTED") == "1":
             return self.run_scripted(actor, event, text) or [AgentMessage(text=safety.SAFE_TEXT_NO_TOOLS)]
         messages = build_messages(self.group, SYSTEM_PROMPT, self.engine, event)
+        from chat.models import PhotonSession
+        short_link_request = bool(re.fullmatch(
+            r'\s*(?:please\s+)?(?:add|invite|share|link|send it|create it|make it|'
+            r'(?:send|resend|give|create|make|generate|share)(?:\s+(?:me|us))?(?:\s+(?:a|the|my|our))?'
+            r'(?:\s+(?:private|organizer|group|plan|invite|shared|trip))*\s+link)(?:\s+please)?[.!?]?\s*', text, re.I))
+        explicit_link_request = short_link_request or bool(re.search(r'\b(?:create|make|generate|send|share|give|want|need|where)[^.!?\n]{0,80}\b(?:link|invite)\b|\bpublish (?:it|the|a|my|this|our)\b', text, re.I))
+        if explicit_link_request and PhotonSession.objects.filter(member__group=self.group).exists():
+            self.link_request_actor = actor
+            if short_link_request and self.publish_requested_proposal(reuse_published=True):
+                return self.compose(None)
         calls = repairs = 0
         original_text = text
         text = None
@@ -226,6 +265,8 @@ class Orchestrator:
         return out
 
     def compose(self, text: str | None) -> list[AgentMessage]:
+        if self.link_request_actor and any(name == 'search_options' for name, data in self.tool_results):
+            self.publish_requested_proposal()
         if any(name == 'publish_plan' for name, data in self.tool_results):
             # Sharing instructions and organizer credentials belong to the
             # server-generated private attachment, never model narration.
